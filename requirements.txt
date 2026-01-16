@@ -1,0 +1,10 @@
+# VanMoof BLE Client Dependencies
+
+# BLE communication
+bleak>=0.21.0
+
+# CBOR encoding/decoding for VanMoof protocol
+cbor2>=5.4.0
+
+# Cryptography for Ed25519 signing
+cryptography>=41.0.0
