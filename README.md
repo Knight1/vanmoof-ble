@@ -30,6 +30,17 @@ pip install -r requirements.txt
 
 ## Usage
 
+### CLI Options
+
+| Option | Description |
+| ------ | ----------- |
+| `--privkey` | Base64-encoded Ed25519 private key (required unless using only `--scan`). |
+| `--cert` | Base64-encoded VanMoof certificate containing CBOR payload (required unless using only `--scan`). |
+| `--mac` | Bluetooth MAC address of the bike. If omitted, the client scans and picks the first match. |
+| `--scan` | Scan for nearby VanMoof bikes and print their addresses. No authentication attempted. |
+| `--debug` | Enable verbose debug logging. |
+| `--timestamp` | Prefix TX/RX logs with timestamps in `seconds.microseconds` format (6 decimals). |
+
 ### Scanning for Bikes
 
 ```bash
