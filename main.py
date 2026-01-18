@@ -337,6 +337,27 @@ class VanMoofClient:
             if not resp:
                 break
 
+    async def set_power_level(self, level: int):
+        """Set the power assist level (0=off, 1-4)"""
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        if level < 0 or level > 4:
+            print("   ❌ Power level must be 0-4")
+            return
+
+        level_names = ["Off", "Level 1", "Level 2", "Level 3", "Level 4"]
+        print(f"\n⚡ Setting power level to {level_names[level]}...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x00, 0x67, level])
+        await self.send(cmd, f"power {level}")
+        await asyncio.sleep(0.5)
+
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
 
 def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
     """Load credentials from base64 strings"""
@@ -430,9 +451,10 @@ Examples:
         print("📱 VanMoof S5 Connected!")
         print("="*50)
         print("\nCommands:")
-        print("   unlock  - Unlock the bike")
-        print("   beep    - Play a sound")
-        print("   quit    - Exit")
+        print("   unlock      - Unlock the bike")
+        print("   beep        - Play a sound")
+        print("   power <0-4> - Set power level (0=off, 1-4)")
+        print("   quit        - Exit")
         print()
         
         while client.connected:
@@ -445,6 +467,12 @@ Examples:
                     await client.unlock()
                 elif cmd in ("beep", "sound"):
                     await client.play_sound(1)
+                elif cmd.startswith("power"):
+                    parts = cmd.split()
+                    if len(parts) == 2 and parts[1].isdigit():
+                        await client.set_power_level(int(parts[1]))
+                    else:
+                        print("Usage: power <0-4>")
                 elif cmd == "":
                     pass
                 else:
