@@ -19,6 +19,7 @@ import asyncio
 import argparse
 import base64
 import sys
+import time
 from typing import Optional
 from dataclasses import dataclass
 
@@ -89,18 +90,25 @@ def build_challenge_response(creds: Credentials, challenge: bytes) -> bytes:
 
 
 class VanMoofClient:
-    def __init__(self, creds: Credentials, debug: bool = False):
+    def __init__(self, creds: Credentials, debug: bool = False, timestamp: bool = False):
         self.creds = creds
         self.debug = debug
+        self.timestamp = timestamp
         self.client: BleakClient = None
         self.char_uuid = VANMOOF_CHAR_UUID
         self.responses: asyncio.Queue = asyncio.Queue()
         self.connected = False
         self.authenticated = False
 
+    def _timestamp(self) -> str:
+        """Get current timestamp with microsecond precision"""
+        if self.timestamp:
+            return f"[{time.time():.6f}] "
+        return ""
+
     def log(self, msg: str):
         if self.debug:
-            print(f"[DEBUG] {msg}")
+            print(f"{self._timestamp()}[DEBUG] {msg}")
 
     async def scan(self, timeout: float = 1.0) -> Optional[str]:
         print(f"🔍 Scanning for VanMoof bikes ({timeout}s)...")
@@ -129,7 +137,7 @@ class VanMoofClient:
     def _on_notify(self, sender: BleakGATTCharacteristic, data: bytearray):
         data_bytes = bytes(data)
         hex_str = ' '.join(f'{b:02X}' for b in data_bytes)
-        print(f"\n📥 RX: {hex_str}")
+        print(f"\n{self._timestamp()}📥 RX: {hex_str}")
         
         # Decode packet
         if len(data_bytes) >= 4:
@@ -195,7 +203,7 @@ class VanMoofClient:
         
         hex_str = ' '.join(f'{b:02X}' for b in data)
         display = hex_str[:80] + ('...' if len(hex_str) > 80 else '')
-        print(f"\n📤 TX: {display}" + (f" [{label}]" if label else ""))
+        print(f"\n{self._timestamp()}📤 TX: {display}" + (f" [{label}]" if label else ""))
 
         try:
             await self.client.write_gatt_char(self.char_uuid, data, response=False)
@@ -391,10 +399,11 @@ Examples:
     parser.add_argument("--mac", help="Bike Bluetooth address")
     parser.add_argument("--scan", action="store_true", help="Scan for bikes")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--timestamp", action="store_true", help="Show timestamps with microsecond precision")
     args = parser.parse_args()
 
     if args.scan:
-        client = VanMoofClient(None, args.debug)
+        client = VanMoofClient(None, args.debug, args.timestamp)
         await client.scan(1.0)
         return
 
@@ -402,7 +411,7 @@ Examples:
         parser.error("--privkey and --cert are required")
 
     creds = load_credentials(args.privkey, args.cert)
-    client = VanMoofClient(creds, args.debug)
+    client = VanMoofClient(creds, args.debug, args.timestamp)
 
     mac = args.mac or await client.scan()
     if not mac:
