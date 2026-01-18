@@ -115,7 +115,7 @@ SELECT id, name FROM bikes;
 SELECT * FROM bike_certificate;
 ```
 
-> Note: The `bike_certificate` table references the app's bike ID, so you'll need to match it if you have multiple S5/A5 or later bikes.
+> Note: The `bike_certificate` table references the app's bike ID, so you'll need to match it if you have multiple SA5 or later bikes.
 
 ## Frida Scripts
 
