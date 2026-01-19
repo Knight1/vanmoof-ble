@@ -273,6 +273,24 @@ RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
 |---------|--------|
 | Unlock | `81 00 03 01 00 A0 01` |
 
+### Power Level Commands
+
+| Power Level | Packet |
+|-------------|--------|
+| Off | `81 00 03 01 00 67 00` |
+| Level 1 | `81 00 03 01 00 67 01` |
+| Level 2 | `81 00 03 01 00 67 02` |
+| Level 3 | `81 00 03 01 00 67 03` |
+| Level 4 | `81 00 03 01 00 67 04` |
+
+### Light Commands
+
+| Light Mode | Packet |
+|------------|--------|
+| Off | `81 00 03 01 00 6B 00` |
+| Always On | `81 00 03 01 00 6B 01` |
+| Auto/Pulse | `81 00 03 01 00 6B 03` |
+
 ### Sound Commands
 
 | Command | Packet |

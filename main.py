@@ -471,7 +471,7 @@ Examples:
             return
 
         print("\n" + "="*50)
-        print("📱 VanMoof S5 Connected!")
+        print("📱 VanMoof Bike Connected!")
         print("="*50)
         print("\nCommands:")
         print("   unlock            - Unlock the bike")

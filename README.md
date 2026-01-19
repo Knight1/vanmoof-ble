@@ -7,6 +7,8 @@ A collection of tools for communicating with VanMoof S5/A5 e-bikes via Bluetooth
 - 🔐 **BLE Authentication** - Authenticate with your VanMoof S5/A5 or later bikes using certificates from the API
 - 🔓 **Unlock Control** - unlock your bike via Bluetooth
 - 🔊 **Sound Control** - Play sounds on the bike
+- ⚡ **Power Level Control** - Adjust power assist levels (0-4)
+- 💡 **Light Control** - Control front light mode (off, on, auto)
 - 🔍 **BLE Scanning** - Discover nearby VanMoof bikes
 - 🛠️ **Frida Scripts** - Android app analysis tools for protocol research
 
@@ -66,6 +68,8 @@ You need to use the MAC Address since the UUID from the Bike changes after every
 Once connected and authenticated, you can use these commands:
 - `unlock` - Unlock the bike
 - `beep` - Play a sound
+- `power <0-4>` - Set power level (0=off, 1-4)
+- `lights <off|on|auto>` - Set light mode
 - `quit` - Exit the program
 
 ## Project Structure
