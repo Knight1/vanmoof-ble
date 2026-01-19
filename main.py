@@ -358,6 +358,29 @@ class VanMoofClient:
             if not resp:
                 break
 
+    async def set_lights(self, mode: str):
+        """Set the light mode (off, on, auto)"""
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        modes = {"off": 0x00, "on": 0x01, "auto": 0x03}
+        mode = mode.lower()
+        if mode not in modes:
+            print("   ❌ Light mode must be: off, on, or auto")
+            return
+
+        mode_names = {"off": "Off", "on": "Always On", "auto": "Auto/Pulse"}
+        print(f"\n💡 Setting lights to {mode_names[mode]}...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x00, 0x6B, modes[mode]])
+        await self.send(cmd, f"lights {mode}")
+        await asyncio.sleep(0.5)
+
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
 
 def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
     """Load credentials from base64 strings"""
@@ -451,10 +474,11 @@ Examples:
         print("📱 VanMoof S5 Connected!")
         print("="*50)
         print("\nCommands:")
-        print("   unlock      - Unlock the bike")
-        print("   beep        - Play a sound")
-        print("   power <0-4> - Set power level (0=off, 1-4)")
-        print("   quit        - Exit")
+        print("   unlock            - Unlock the bike")
+        print("   beep              - Play a sound")
+        print("   power <0-4>       - Set power level (0=off, 1-4)")
+        print("   lights <off|on|auto> - Set light mode")
+        print("   quit              - Exit")
         print()
         
         while client.connected:
@@ -473,6 +497,12 @@ Examples:
                         await client.set_power_level(int(parts[1]))
                     else:
                         print("Usage: power <0-4>")
+                elif cmd.startswith("light"):
+                    parts = cmd.split()
+                    if len(parts) == 2 and parts[1] in ("off", "on", "auto"):
+                        await client.set_lights(parts[1])
+                    else:
+                        print("Usage: lights <off|on|auto>")
                 elif cmd == "":
                     pass
                 else:
