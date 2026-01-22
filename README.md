@@ -65,12 +65,21 @@ You need to use the MAC Address since the UUID from the Bike changes after every
 
 ### Interactive Commands
 
+
 Once connected and authenticated, you can use these commands:
-- `unlock` - Unlock the bike
-- `beep` - Play a sound
-- `power <0-4>` - Set power level (0=off, 1-4)
-- `lights <off|on|auto>` - Set light mode
-- `quit` - Exit the program
+
+| Command                | Description                | BLE Packet (hex)         |
+|------------------------|----------------------------|--------------------------|
+| `unlock`               | Unlock the bike            | 81 00 03 01 00 A0 01     |
+| `lock`                 | Lock the bike              | 81 00 03 01 00 A0 00     |
+| `arm`                  | Arm (enable) alarm         | 81 00 03 01 01 A0 01     |
+| `disarm`               | Disarm (disable) alarm     | 81 00 03 01 01 A0 00     |
+| `alarm`                | Trigger alarm sound        | 81 00 03 01 02 A0 01     |
+| `beep`                 | Play a sound               | 81 00 03 01 00 21 01     |
+| `power <0-4>`          | Set power level            | 81 00 03 01 00 67 <n>    |
+| `lights <off|on|auto>` | Set light mode             | 81 00 03 01 00 6B <n>    |
+| `quit`                 | Exit the program           | -                        |
+
 
 ## Project Structure
 

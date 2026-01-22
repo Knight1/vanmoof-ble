@@ -267,11 +267,16 @@ RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
 └────────┴────────┴────────┴────────┴────────┴────────┴────────┘
 ```
 
-### Unlock Commands
 
-| Command | Packet |
-|---------|--------|
-| Unlock | `81 00 03 01 00 A0 01` |
+### Lock/Unlock/Alarm Commands
+
+| Function            | Command (hex)          | Meaning              |
+|---------------------|-----------------------|----------------------|
+| Unlock bike         | 81 00 03 01 00 A0 01  | Unlock main lock     |
+| Lock bike           | 81 00 03 01 00 A0 00  | Lock main lock       |
+| Arm alarm           | 81 00 03 01 01 A0 01  | Enable alarm         |
+| Disarm alarm        | 81 00 03 01 01 A0 00  | Disable alarm        |
+| Trigger alarm sound | 81 00 03 01 02 A0 01  | Immediate alarm      |
 
 ### Power Level Commands
 

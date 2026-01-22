@@ -321,6 +321,90 @@ class VanMoofClient:
             if not resp:
                 break
 
+    async def lock(self):
+        """
+        Lock the bike.
+
+        BLE Packet: 81 00 03 01 00 A0 00
+        """
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        print("\n🔒 Locking...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x00, 0xA0, 0x00])
+        await self.send(cmd, "lock")
+        await asyncio.sleep(0.5)
+
+        # Collect any responses
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
+    async def arm_alarm(self):
+        """
+        Arm (enable) the bike alarm.
+
+        BLE Packet: 81 00 03 01 01 A0 01
+        """
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        print("\n🚨 Arming alarm...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x01])
+        await self.send(cmd, "arm alarm")
+        await asyncio.sleep(0.5)
+
+        # Collect any responses
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
+    async def disarm_alarm(self):
+        """
+        Disarm (disable) the bike alarm.
+
+        BLE Packet: 81 00 03 01 01 A0 00
+        """
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        print("\n🔕 Disarming alarm...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x00])
+        await self.send(cmd, "disarm alarm")
+        await asyncio.sleep(0.5)
+
+        # Collect any responses
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
+    async def trigger_alarm_sound(self):
+        """
+        Trigger the immediate alarm sound on the bike.
+
+        BLE Packet: 81 00 03 01 02 A0 01
+        """
+        if not self.authenticated:
+            print("   ❌ Not authenticated")
+            return
+
+        print("\n🔔 Triggering alarm sound...")
+        cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x02, 0xA0, 0x01])
+        await self.send(cmd, "trigger alarm")
+        await asyncio.sleep(0.5)
+
+        # Collect any responses
+        for _ in range(3):
+            resp = await self.recv(0.5)
+            if not resp:
+                break
+
     async def play_sound(self, sound_id: int = 1):
         """Play a sound on the bike"""
         if not self.authenticated:
@@ -424,20 +508,32 @@ def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="VanMoof S5 BLE Client",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+            description="VanMoof S5 BLE Client",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
 Examples:
-  Scan for bikes:
-    python main.py --scan
+    Scan for bikes:
+        python main.py --scan
 
-  Connect and authenticate:
-    python main.py --privkey "BASE64_KEY" --cert "BASE64_CERT"
+    Connect and authenticate:
+        python main.py --privkey "BASE64_KEY" --cert "BASE64_CERT"
 
-  With specific MAC address:
-    python main.py --privkey "..." --cert "..." --mac "XX:XX:XX:XX:XX:XX"
+    With specific MAC address:
+        python main.py --privkey "..." --cert "..." --mac "XX:XX:XX:XX:XX:XX"
+
+Commands (interactive):
+    unlock            - Unlock the bike
+    lock              - Lock the bike
+    arm               - Arm alarm
+    disarm            - Disarm alarm
+    alarm             - Trigger alarm sound
+    beep              - Play a sound
+    power <0-4>       - Set power level (0=off, 1-4)
+    lights <off|on|auto> - Set light mode
+    quit              - Exit
 """
     )
+        
     parser.add_argument("--privkey", help="Base64 Ed25519 private key")
     parser.add_argument("--cert", help="Base64 certificate from VanMoof API")
     parser.add_argument("--mac", help="Bike Bluetooth address")
@@ -475,6 +571,10 @@ Examples:
         print("="*50)
         print("\nCommands:")
         print("   unlock            - Unlock the bike")
+        print("   lock              - Lock the bike")
+        print("   arm               - Arm alarm")
+        print("   disarm            - Disarm alarm")
+        print("   alarm             - Trigger alarm sound")
         print("   beep              - Play a sound")
         print("   power <0-4>       - Set power level (0=off, 1-4)")
         print("   lights <off|on|auto> - Set light mode")
@@ -489,6 +589,14 @@ Examples:
                     break
                 elif cmd == "unlock":
                     await client.unlock()
+                elif cmd == "lock":
+                    await client.lock()
+                elif cmd in ("arm", "arm_alarm"):
+                    await client.arm_alarm()
+                elif cmd in ("disarm", "disarm_alarm"):
+                    await client.disarm_alarm()
+                elif cmd in ("alarm", "trigger_alarm"):
+                    await client.trigger_alarm_sound()
                 elif cmd in ("beep", "sound"):
                     await client.play_sound(1)
                 elif cmd.startswith("power"):
