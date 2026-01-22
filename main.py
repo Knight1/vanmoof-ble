@@ -24,8 +24,11 @@ import time
 from typing import Optional
 from dataclasses import dataclass
 
+
 # Sound/feedback commands
 import sound
+# Ride/power control commands
+import ride
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -531,8 +534,15 @@ Commands (interactive):
     arm               - Arm alarm
     disarm            - Disarm alarm
     alarm             - Trigger alarm sound
-    beep              - Play a sound
+    beep              - Play a sound (default)
+    bell              - Bell ding
+    bell2             - Bell double ding
+    horn              - Horn sound
     power <0-4>       - Set power level (0=off, 1-4)
+    poweron           - Power on bike
+    poweroff          - Power off bike
+    booston           - Enable boost mode
+    boostoff          - Disable boost mode
     lights <off|on|auto> - Set light mode
     quit              - Exit
 """
@@ -584,6 +594,10 @@ Commands (interactive):
         print("   bell2             - Bell double ding")
         print("   horn              - Horn sound")
         print("   power <0-4>       - Set power level (0=off, 1-4)")
+        print("   poweron           - Power on bike")
+        print("   poweroff          - Power off bike")
+        print("   booston           - Enable boost mode")
+        print("   boostoff          - Disable boost mode")
         print("   lights <off|on|auto> - Set light mode")
         print("   quit              - Exit")
         print()
@@ -618,6 +632,14 @@ Commands (interactive):
                         await client.set_power_level(int(parts[1]))
                     else:
                         print("Usage: power <0-4>")
+                elif cmd == "poweron":
+                    await ride.power_on_bike(client)
+                elif cmd == "poweroff":
+                    await ride.power_off_bike(client)
+                elif cmd == "booston":
+                    await ride.enable_boost(client)
+                elif cmd == "boostoff":
+                    await ride.disable_boost(client)
                 elif cmd.startswith("light"):
                     parts = cmd.split()
                     if len(parts) == 2 and parts[1] in ("off", "on", "auto"):

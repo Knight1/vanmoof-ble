@@ -76,7 +76,14 @@ Once connected and authenticated, you can use these commands:
 | `disarm`               | Disarm (disable) alarm     | 81 00 03 01 01 A0 00     |
 | `alarm`                | Trigger alarm sound        | 81 00 03 01 02 A0 01     |
 | `beep`                 | Play a sound               | 81 00 03 01 00 21 01     |
+| `bell`                 | Bell ding                  | 81 00 03 02 00 A0 01     |
+| `bell2`                | Bell double ding           | 81 00 03 02 00 A0 02     |
+| `horn`                 | Horn sound                 | 81 00 03 02 01 A0 01     |
 | `power <0-4>`          | Set power level            | 81 00 03 01 00 67 <n>    |
+| `poweron`              | Power on bike              | 81 00 03 03 00 A0 01     |
+| `poweroff`             | Power off bike             | 81 00 03 03 00 A0 00     |
+| `booston`              | Enable boost mode          | 81 00 03 03 01 A0 01     |
+| `boostoff`             | Disable boost mode         | 81 00 03 03 01 A0 00     |
 | `lights <off|on|auto>` | Set light mode             | 81 00 03 01 00 6B <n>    |
 | `quit`                 | Exit the program           | -                        |
 

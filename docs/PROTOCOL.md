@@ -279,9 +279,10 @@ RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
 | Disarm alarm        | 81 00 03 01 01 A0 00  | Disable alarm        |
 | Trigger alarm sound | 81 00 03 01 02 A0 01  | Immediate alarm      |
 
+
 ### Sound/Feedback Commands
 
-See also: [sound.py](../sound.py), [sound.md](../sound.md)
+See also: [sound.py](../sound.py)
 
 | Function           | Command (hex)          | Description         |
 |--------------------|-----------------------|---------------------|
@@ -290,6 +291,19 @@ See also: [sound.py](../sound.py), [sound.md](../sound.md)
 | Horn sound         | 81 00 03 02 01 A0 01  | Horn sound          |
 
 Command group `0x02` = sound/feedback
+
+### Ride/Power Control Commands
+
+See also: [ride.py](../ride.py)
+
+| Function         | Command (hex)          | Description         |
+|------------------|-----------------------|---------------------|
+| Power on bike    | 81 00 03 03 00 A0 01  | Power on bike       |
+| Power off bike   | 81 00 03 03 00 A0 00  | Power off bike      |
+| Enable boost     | 81 00 03 03 01 A0 01  | Enable boost mode   |
+| Disable boost    | 81 00 03 03 01 A0 00  | Disable boost mode  |
+
+Command group `0x03` = ride/power control
 
 ### Power Level Commands
 
