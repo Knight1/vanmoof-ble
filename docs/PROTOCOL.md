@@ -268,6 +268,7 @@ RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
 ```
 
 
+
 ### Lock/Unlock/Alarm Commands
 
 | Function            | Command (hex)          | Meaning              |
@@ -277,6 +278,18 @@ RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
 | Arm alarm           | 81 00 03 01 01 A0 01  | Enable alarm         |
 | Disarm alarm        | 81 00 03 01 01 A0 00  | Disable alarm        |
 | Trigger alarm sound | 81 00 03 01 02 A0 01  | Immediate alarm      |
+
+### Sound/Feedback Commands
+
+See also: [sound.py](../sound.py), [sound.md](../sound.md)
+
+| Function           | Command (hex)          | Description         |
+|--------------------|-----------------------|---------------------|
+| Bell ding          | 81 00 03 02 00 A0 01  | Bell ding (single)  |
+| Bell double ding   | 81 00 03 02 00 A0 02  | Bell double ding    |
+| Horn sound         | 81 00 03 02 01 A0 01  | Horn sound          |
+
+Command group `0x02` = sound/feedback
 
 ### Power Level Commands
 

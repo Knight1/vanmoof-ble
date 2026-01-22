@@ -18,10 +18,14 @@ Protocol:
 import asyncio
 import argparse
 import base64
+
 import sys
 import time
 from typing import Optional
 from dataclasses import dataclass
+
+# Sound/feedback commands
+import sound
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -575,7 +579,10 @@ Commands (interactive):
         print("   arm               - Arm alarm")
         print("   disarm            - Disarm alarm")
         print("   alarm             - Trigger alarm sound")
-        print("   beep              - Play a sound")
+        print("   beep              - Play a sound (default)")
+        print("   bell              - Bell ding")
+        print("   bell2             - Bell double ding")
+        print("   horn              - Horn sound")
         print("   power <0-4>       - Set power level (0=off, 1-4)")
         print("   lights <off|on|auto> - Set light mode")
         print("   quit              - Exit")
@@ -599,6 +606,12 @@ Commands (interactive):
                     await client.trigger_alarm_sound()
                 elif cmd in ("beep", "sound"):
                     await client.play_sound(1)
+                elif cmd == "bell":
+                    await sound.bell_ding(client)
+                elif cmd == "bell2":
+                    await sound.bell_double_ding(client)
+                elif cmd == "horn":
+                    await sound.horn_sound(client)
                 elif cmd.startswith("power"):
                     parts = cmd.split()
                     if len(parts) == 2 and parts[1].isdigit():
