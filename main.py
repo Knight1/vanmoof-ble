@@ -24,8 +24,10 @@ import time
 from typing import Optional
 from dataclasses import dataclass
 
-
-
+# Utility modules
+from utils.crypto_utils import load_private_key, build_challenge_response
+from utils.protocol_utils import build_tx_header, build_auth_packet
+from utils.credentials_utils import load_credentials, Credentials
 # Command group modules
 from commands import lock, alarm, sound, power, lights
 
@@ -62,37 +64,6 @@ class Credentials:
     frame: str = None
     expiry: int = None
     role: int = None
-
-
-def load_private_key(privkey_b64: str) -> Ed25519PrivateKey:
-    """Load Ed25519 private key (handles 32 or 64 byte formats)"""
-    raw = base64.b64decode(privkey_b64)
-    seed = raw[:32]  # First 32 bytes is the seed
-    return Ed25519PrivateKey.from_private_bytes(seed)
-
-
-def build_tx_header(rx_header: bytes = None) -> bytes:
-    """
-    Build TX header based on RX header. 
-    Bike sends 80/81/82, we respond with 81.
-    """
-    return bytes([0x81, 0x00])
-
-
-def build_auth_packet(creds: Credentials) -> bytes:
-    """Build the certificate authentication packet"""
-    packet = bytearray([0x81, 0x00, 0xA9, 0x03])
-    packet.extend(creds.ca_signature)
-    packet.extend(creds.cert_cbor)
-    return bytes(packet)
-
-
-def build_challenge_response(creds: Credentials, challenge: bytes) -> bytes:
-    """Sign the challenge with our private key"""
-    signature = creds.private_key.sign(challenge)
-    packet = bytearray([0x81, 0x00, 0x40, 0x04])
-    packet.extend(signature)
-    return bytes(packet)
 
 
 class VanMoofClient:
@@ -311,44 +282,6 @@ class VanMoofClient:
 
 
 
-def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
-    """Load credentials from base64 strings"""
-    # Load private key
-    private_key = load_private_key(privkey_b64)
-    public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    
-    # Load certificate
-    cert_raw = base64.b64decode(cert_b64)
-    ca_sig = cert_raw[:64]
-    cert_cbor = cert_raw[64:]
-
-    # Parse CBOR
-    parsed = cbor2.loads(cert_cbor)
-    cert_pubkey = parsed.get("p")
-
-    creds = Credentials(
-        private_key=private_key,
-        public_key=public_key,
-        ca_signature=ca_sig,
-        cert_cbor=cert_cbor,
-        cert_id=parsed.get("i"),
-        frame=parsed.get("f"),
-        expiry=parsed.get("e"),
-        role=parsed.get("r"),
-    )
-
-    print("📋 Credentials Loaded:")
-    print(f"   Cert ID: {creds.cert_id}")
-    print(f"   Frame:   {creds.frame}")
-    print(f"   Role:    {creds.role} ({'Owner' if creds.role == 7 else 'User'})")
-
-    if cert_pubkey == public_key:
-        print("   ✅ Keys match!")
-    else:
-        print("   ❌ KEY MISMATCH - wrong private key!")
-        sys.exit(1)
-    
-    return creds
 
 
 async def main():
