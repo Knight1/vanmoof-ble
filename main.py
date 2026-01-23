@@ -229,9 +229,11 @@ class VanMoofClient:
             return False
         
         # Echo init
+        # The received packet might begin with 0x81 or 0x82 (see protocol details).
+        # The bike expects an exact echo of the first byte (0x81 or 0x82).
         if init:
             echo = bytearray(init)
-            echo[0] = 0x81  # Always use 81 for TX
+            # Echo the first byte as received (0x81 or 0x82)
             await self.send(bytes(echo), "echo")
             await asyncio.sleep(0.1)
         
