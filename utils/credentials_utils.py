@@ -11,7 +11,9 @@ import cbor2
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from dataclasses import dataclass
+
 import sys
+import datetime
 
 @dataclass
 class Credentials:
@@ -44,10 +46,16 @@ def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
         expiry=parsed.get("e"),
         role=parsed.get("r"),
     )
+    
     print("📋 Credentials Loaded:")
     print(f"   Cert ID: {creds.cert_id}")
     print(f"   Frame:   {creds.frame}")
     print(f"   Role:    {creds.role} ({'Owner' if creds.role == 7 else 'User'})")
+    if creds.expiry:
+        dt = datetime.datetime.fromtimestamp(creds.expiry, tz=datetime.timezone.utc)
+        print(f"   Expiry:  {dt.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    else:
+        print("   Expiry:  (not present)")
     if cert_pubkey == public_key:
         print("   ✅ Keys match!")
     else:
