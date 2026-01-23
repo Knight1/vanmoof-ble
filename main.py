@@ -345,7 +345,7 @@ Commands (interactive):
     expiry = creds.expiry
     if expiry:
         # expiry is expected to be a UNIX timestamp (seconds)
-        now = int(datetime.datetime.utcnow().timestamp())
+        now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
         if now > expiry:
             if args.ignore_expiry:
                 print("⚠️ Certificate is expired, but --ignore-expiry is set. Continuing...")
