@@ -60,6 +60,11 @@ The VanMoof SA5 and later bikes uses Bluetooth Low Energy (BLE) for communicatio
 ��  6. CONFIRMATION                                                            │
 │     └── Bike → Client: {enc: false, auth: true}                            │
 │                                                                             │
+│  7. ENCRYPTION (Optional)                                                   │
+│     ├── Client → Bike: A0 + 16-byte phone nonce                            │
+│     ├── Bike → Client: A1 + 16-byte bike nonce                             │
+│     └── IVs derived: TX_IV = NOT(bike_nonce), RX_IV = bike_nonce           │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -335,6 +340,71 @@ Command group `0x03` = ride/power control
 
 ---
 
+## Encryption (Optional)
+
+After authentication, an optional AES-128-CBC encrypted session can be established.
+
+### Encryption Handshake
+
+#### Step 1: Client Sends Encryption Init
+
+```
+TX: A0 [16-byte random nonce]
+```
+
+Example:
+```
+TX: A0 3E 7B 9F 24 8A 55 91 6D 0C 33 A7 F4 92 B8 61 2F
+```
+
+#### Step 2: Bike Responds with Nonce
+
+```
+RX: A1 [16-byte bike nonce]
+```
+
+Example:
+```
+RX: A1 92 C4 10 6E 8D 1B F0 73 49 A6 55 2C 18 E9 0F 3A
+```
+
+#### Step 3: Derive IVs
+
+IVs are derived asymmetrically from the bike nonce:
+
+```python
+# TX IV (phone -> bike): bitwise NOT of bike nonce
+iv_enc = bytes(b ^ 0xFF for b in bike_nonce)
+
+# RX IV (bike -> phone): bike nonce as-is
+iv_dec = bike_nonce
+```
+
+#### Step 4: Encrypted Frame Format
+
+All subsequent VM frames are encrypted:
+
+```
+Plaintext format:
+[length][0x01][VM frame bytes][zero padding to 16-byte boundary]
+
+Encrypted with AES-128-CBC, IV chaining:
+iv_enc = last 16 bytes of ciphertext after each encryption
+iv_dec = last 16 bytes of ciphertext after each decryption
+```
+
+### Encryption Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Cipher | AES-128 |
+| Mode | CBC |
+| Key Size | 16 bytes |
+| IV Size | 16 bytes |
+| Padding | Manual zero padding to 16-byte boundary |
+| IV Update | Chained (last 16 bytes of ciphertext) |
+
+---
 
 ## Troubleshooting
 
