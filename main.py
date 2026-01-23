@@ -29,7 +29,7 @@ from utils.crypto_utils import load_private_key, build_challenge_response
 from utils.protocol_utils import build_tx_header, build_auth_packet
 from utils.credentials_utils import load_credentials, Credentials
 # Command group modules
-from commands import lock, alarm, sound, power, lights
+from commands import lock, alarm, sound, power, lights, ride
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -380,17 +380,17 @@ Commands (interactive):
                 if cmd in ("q", "quit", "exit"):
                     break
                 elif cmd == "unlock":
-                    await client.unlock()
+                    await lock.unlock(client)
                 elif cmd == "lock":
-                    await client.lock()
+                    await lock.lock(client)
                 elif cmd in ("arm", "arm_alarm"):
-                    await client.arm_alarm()
+                    await alarm.arm_alarm(client)
                 elif cmd in ("disarm", "disarm_alarm"):
-                    await client.disarm_alarm()
+                    await alarm.disarm_alarm(client)
                 elif cmd in ("alarm", "trigger_alarm"):
-                    await client.trigger_alarm_sound()
+                    await alarm.trigger_alarm_sound(client)
                 elif cmd in ("beep", "sound"):
-                    await client.play_sound(1)
+                    await sound.play_sound(client, 1)
                 elif cmd == "bell":
                     await sound.bell_ding(client)
                 elif cmd == "bell2":
@@ -400,7 +400,7 @@ Commands (interactive):
                 elif cmd.startswith("power"):
                     parts = cmd.split()
                     if len(parts) == 2 and parts[1].isdigit():
-                        await client.set_power_level(int(parts[1]))
+                        await power.set_power_level(client, int(parts[1]))
                     else:
                         print("Usage: power <0-4>")
                 elif cmd == "poweron":
@@ -411,10 +411,10 @@ Commands (interactive):
                     await ride.enable_boost(client)
                 elif cmd == "boostoff":
                     await ride.disable_boost(client)
-                elif cmd.startswith("light"):
+                elif cmd.startswith("lights"):
                     parts = cmd.split()
                     if len(parts) == 2 and parts[1] in ("off", "on", "auto"):
-                        await client.set_lights(parts[1])
+                        await lights.set_lights(client, parts[1])
                     else:
                         print("Usage: lights <off|on|auto>")
                 elif cmd == "":
