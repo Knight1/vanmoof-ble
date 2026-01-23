@@ -16,9 +16,9 @@ def load_private_key(privkey_b64: str) -> Ed25519PrivateKey:
     seed = raw[:32]  # First 32 bytes is the seed
     return Ed25519PrivateKey.from_private_bytes(seed)
 
-def build_challenge_response(creds, challenge: bytes) -> bytes:
+def build_challenge_response(creds, challenge: bytes, first_byte: int = 0x81) -> bytes:
     """Sign the challenge with our private key"""
     signature = creds.private_key.sign(challenge)
-    packet = bytearray([0x81, 0x00, 0x40, 0x04])
+    packet = bytearray([first_byte, 0x00, 0x40, 0x04])
     packet.extend(signature)
     return bytes(packet)

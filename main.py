@@ -245,7 +245,8 @@ class VanMoofClient:
             await asyncio.sleep(0.1)
         
         # Send certificate
-        cert_pkt = build_auth_packet(self.creds)
+        first_byte = init[0] if init else 0x81
+        cert_pkt = build_auth_packet(self.creds, first_byte)
         await self.send(cert_pkt, "certificate")
         
         # Wait for challenge
@@ -271,7 +272,7 @@ class VanMoofClient:
             return False
         
         # Send challenge response
-        response_pkt = build_challenge_response(self.creds, challenge)
+        response_pkt = build_challenge_response(self.creds, challenge, first_byte)
         await self.send(response_pkt, "response")
         
         # Wait for confirmation

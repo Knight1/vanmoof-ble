@@ -31,10 +31,15 @@ def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
     private_key = base64.b64decode(privkey_b64)
     private_key = Ed25519PrivateKey.from_private_bytes(private_key[:32])
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    
     cert_raw = base64.b64decode(cert_b64)
+    
+    # Both formats use: 64 bytes signature + CBOR cert data
     ca_sig = cert_raw[:64]
-    cert_cbor = cert_raw[64:]
-    parsed = cbor2.loads(cert_cbor)
+    cert_cbor_only = cert_raw[64:]
+    parsed = cbor2.loads(cert_cbor_only)
+    cert_cbor = cert_raw
+    
     cert_pubkey = parsed.get("p")
     creds = Credentials(
         private_key=private_key,
