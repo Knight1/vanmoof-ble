@@ -77,17 +77,18 @@ The VanMoof SA5 and later bikes uses Bluetooth Low Energy (BLE) for communicatio
 
 ### Packet Frame Structure
 
-All packets use a 2-byte header: 
+All packets use a variable-length header:
 
 ```
-┌────────┬────────┬─────────────────┐
-│ Byte 0 │ Byte 1 │ Payload         │
-├────────┼────────┼─────────────────┤
-│ 0x80   │ 0x00   │ Bike → Client   │
-│ 0x81   │ 0x00   │ Client → Bike   │
-│ 0x82   │ 0x00   │ Bike → Client * │
-└────────┴────────┴─────────────────┘
+┌────────┬────────┬────────┬─────────────────┐
+│ Byte 0 │ Byte 1 │ Byte 2 │ Payload         │
+├────────┼────────┼────────┼─────────────────┤
+│ 0x80   │ 0x00   │ Length │ Bike → Client   │
+│ 0x81   │ 0x00   │ Length │ Client → Bike   │
+│ 0x82   │ 0x00   │ Length │ Bike → Client * │
+└────────┴────────┴────────┴─────────────────┘
 * 0x82 observed in some protocol versions
+* Length must match actual payload size
 ```
 
 ### Message Types
@@ -97,7 +98,7 @@ All packets use a 2-byte header:
 | 0x0D | 0x05 | Both | Status message (CBOR) |
 | 0x10 | 0x04 | Bike→Client | Challenge (16 bytes) |
 | 0x40 | 0x04 | Client→Bike | Challenge response (64 bytes) |
-| 0xA9 | 0x03 | Client→Bike | Certificate packet |
+| Length | 0x03 | Client→Bike | Certificate packet (length varies) |
 | 0x1F | 0x07 | Bike→Client | Connection parameters |
 | 0x03 | 0x01 | Client→Bike | Command (lock/unlock/etc) |
 | 0x07 | 0x01 | Bike→Client | Command response |
@@ -202,16 +203,18 @@ TX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
 
 Build the certificate packet: 
 ```
-TX: 81 00 A9 03 [64-byte CA signature] [CBOR payload]
+TX: 81 00 [LENGTH] 03 [64-byte CA signature] [CBOR payload]
 ```
 
-**Important:** The CA signature is the ORIGINAL signature from the API certificate, NOT a freshly computed signature!
+**Important:** 
+- The LENGTH byte must match the actual certificate size
+- The CA signature is the ORIGINAL signature from the API certificate, NOT a freshly computed signature!
 
 ```python
-def build_auth_packet(ca_signature:  bytes, cert_cbor: bytes) -> bytes:
-    packet = bytearray([0x81, 0x00, 0xA9, 0x03])
-    packet.extend(ca_signature)  # 64 bytes from API cert
-    packet. extend(cert_cbor)     # CBOR payload from API cert
+def build_auth_packet(ca_signature: bytes, cert_cbor: bytes) -> bytes:
+    cert_data = ca_signature + cert_cbor  # Combine signature and CBOR
+    packet = bytearray([0x81, 0x00, len(cert_data), 0x03])
+    packet.extend(cert_data)
     return bytes(packet)
 ```
 
@@ -339,9 +342,11 @@ Command group `0x03` = ride/power control
 
 | Cause | Solution |
 |-------|----------|
+| Wrong packet length | Ensure length byte matches actual certificate size |
 | Wrong CA signature | Use the original signature from the API certificate, don't compute a new one |
 | Key mismatch | Ensure your private key matches the public key in the certificate |
 | Certificate expired | Request a new certificate from the API |
+| Wrong packet header | Use same first byte (0x81/0x82) as bike's initial response |
 
 ### No Challenge Received
 

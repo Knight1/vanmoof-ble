@@ -122,9 +122,9 @@ The VanMoof SA5 and later uses a custom BLE protocol with the following authenti
 - **Service/Characteristic**: `e3d80001-3416-4a54-b011-68d41fdcbfcf`
 
 ### Packet Structure
-- Byte 0: Message type (0x80/0x81/0x82)
+- Byte 0: Message type (0x80/0x81/0x82) - must match bike's initial response
 - Byte 1: Reserved (0x00)
-- Byte 2: Command module
+- Byte 2: Payload length (varies by certificate size)
 - Byte 3: Command type
 - Byte 4+: Payload (often CBOR encoded)
 
