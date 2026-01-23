@@ -319,12 +319,14 @@ Commands (interactive):
 """
     )
         
+
     parser.add_argument("--privkey", help="Base64 Ed25519 private key")
     parser.add_argument("--cert", help="Base64 certificate from VanMoof API")
     parser.add_argument("--mac", help="Bike Bluetooth address")
     parser.add_argument("--scan", action="store_true", help="Scan for bikes")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     parser.add_argument("--timestamp", action="store_true", help="Show timestamps with microsecond precision")
+    parser.add_argument("--ignore-expiry", action="store_true", help="Ignore certificate expiry check")
     args = parser.parse_args()
 
     if args.scan:
@@ -335,7 +337,22 @@ Commands (interactive):
     if not args.privkey or not args.cert:
         parser.error("--privkey and --cert are required")
 
+
     creds = load_credentials(args.privkey, args.cert)
+
+    # Check certificate expiry
+    import datetime
+    expiry = creds.expiry
+    if expiry:
+        # expiry is expected to be a UNIX timestamp (seconds)
+        now = int(datetime.datetime.utcnow().timestamp())
+        if now > expiry:
+            if args.ignore_expiry:
+                print("⚠️ Certificate is expired, but --ignore-expiry is set. Continuing...")
+            else:
+                print("❌ Certificate is expired. Aborting.")
+                return
+
     client = VanMoofClient(creds, args.debug, args.timestamp)
 
     mac = args.mac or await client.scan()
