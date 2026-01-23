@@ -114,7 +114,11 @@ class VanMoofClient:
     def _on_notify(self, sender: BleakGATTCharacteristic, data: bytearray):
         data_bytes = bytes(data)
         hex_str = ' '.join(f'{b:02X}' for b in data_bytes)
-        print(f"\n{self._timestamp()}📥 RX: {hex_str}")
+        if self.debug:
+            display = hex_str
+        else:
+            display = hex_str[:80] + ('...' if len(hex_str) > 80 else '')
+        print(f"\n{self._timestamp()}📥 RX: {display}")
         
         # Decode packet
         if len(data_bytes) >= 4:
@@ -179,7 +183,10 @@ class VanMoofClient:
             return False
         
         hex_str = ' '.join(f'{b:02X}' for b in data)
-        display = hex_str[:80] + ('...' if len(hex_str) > 80 else '')
+        if self.debug:
+            display = hex_str
+        else:
+            display = hex_str[:80] + ('...' if len(hex_str) > 80 else '')
         print(f"\n{self._timestamp()}📤 TX: {display}" + (f" [{label}]" if label else ""))
 
         try:
