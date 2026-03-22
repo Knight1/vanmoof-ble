@@ -59,12 +59,20 @@ async def set_power_level(client, level: int):
     print("   🔓 Unlocking bike...")
     await unlock(client)
     await asyncio.sleep(0.3)
-    
+
+    if not client.connected:
+        print("   Disconnected during unlock")
+        return
+
     # Step 2: Power on bike
     print("   🔌 Powering on bike...")
     await power_on_bike(client)
     await asyncio.sleep(0.3)
-    
+
+    if not client.connected:
+        print("   Disconnected during power-on")
+        return
+
     # Step 3: Wait for bike to be ready (enabled and ready state)
     print("   ⏳ Waiting for bike to be ready...")
     if not await _wait_for_ready(client, timeout=2.0):
