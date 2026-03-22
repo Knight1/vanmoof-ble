@@ -87,25 +87,38 @@ class VanMoofClient:
         if self.debug:
             print(f"{self._timestamp()}[DEBUG] {msg}")
 
-    async def scan(self, timeout: float = 1.0) -> Optional[str]:
-        print(f"🔍 Scanning for VanMoof bikes ({timeout}s)...")
-        found = []
+    async def scan(self, timeout: float = 10.0) -> Optional[str]:
+        """Scan for VanMoof bikes until first one is found or timeout"""
+        print(f"🔍 Scanning for VanMoof bikes (max {timeout}s)...")
+        found_device = None
+        found_event = asyncio.Event()
 
         def cb(dev: BLEDevice, adv: AdvertisementData):
+            nonlocal found_device
+            if found_device:
+                return
             name = dev.name or adv.local_name or ""
             if any(x in name.upper() for x in ["VANMOOF", "SVTB"]):
-                found.append(dev)
+                found_device = dev
+                found_event.set()
             elif adv.service_uuids and any("e3d8" in u for u in adv.service_uuids):
-                found.append(dev)
+                found_device = dev
+                found_event.set()
 
         scanner = BleakScanner(detection_callback=cb)
         await scanner.start()
-        await asyncio.sleep(timeout)
+        
+        try:
+            await asyncio.wait_for(found_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        
         await scanner.stop()
 
-        for d in found:
-            print(f"  📍 {d.name or 'VanMoof'} - {d.address}")
-        return found[0].address if found else None
+        if found_device:
+            print(f"  📍 {found_device.name or 'VanMoof'} - {found_device.address}")
+            return found_device.address
+        return None
 
     def _on_disconnect(self, client: BleakClient):
         self.connected = False
