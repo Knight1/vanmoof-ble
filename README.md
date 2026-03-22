@@ -1,16 +1,22 @@
 # VanMoof BLE Communication
 
-A collection of tools for communicating with VanMoof S5/A5 e-bikes via Bluetooth Low Energy (BLE). This project enables direct bike communication for authentication, unlocking, and other commands.
+A Python tool for communicating with VanMoof S5 and A5 e-bikes via Bluetooth Low Energy (BLE). Authenticate, control, and query your bike directly from any computer or device with Bluetooth.
 
 ## Features
 
-- 🔐 **BLE Authentication** - Authenticate with your VanMoof S5/A5 or later bikes using certificates from the API
-- 🔓 **Unlock Control** - unlock your bike via Bluetooth
-- 🔊 **Sound Control** - Play sounds on the bike
-- ⚡ **Power Level Control** - Adjust power assist levels (0-4)
-- 💡 **Light Control** - Control front light mode (off, on, auto)
-- 🔍 **BLE Scanning** - Discover nearby VanMoof bikes
-- 🛠️ **Frida Scripts** - Android app analysis tools for protocol research
+- **Authentication** - Ed25519 certificate-based authentication over BLE
+- **Lock / Unlock** - Lock and unlock the bike remotely
+- **Alarm** - Arm, disarm, and trigger the alarm
+- **Sound** - Bell (single/double ding), horn, and custom sounds
+- **Power Control** - Power on/off bike electronics, enable/disable boost mode
+- **Assist Level** - Set motor assist level (0-4)
+- **Lights** - Control front light mode (off, on, auto)
+- **Speed Region** - Set speed region (EU 25 km/h, US 32 km/h, JP 24 km/h)
+- **Status Queries** - Query lock state, alarm, lights, power, battery, and more
+- **Device Info** - Read firmware version, model, serial from BLE GATT
+- **BLE Scanning** - Discover nearby VanMoof bikes
+- **Raw Commands** - Send arbitrary hex commands for protocol exploration
+- **Debug Mode** - Full packet logging with optional timestamps
 
 ## Prerequisites
 
@@ -56,7 +62,7 @@ python main.py --scan
 python main.py --privkey "YOUR_BASE64_PRIVATE_KEY" --cert "YOUR_BASE64_CERTIFICATE"
 ```
 
-### With a specific MAC Address
+### With a Specific MAC Address
 
 ```bash
 python main.py --privkey "..." --cert "..." --mac "XX:XX:XX:XX:XX:XX"
@@ -185,24 +191,31 @@ vanmoof-ble/
 
 ## Protocol Overview
 
-For detailed protocol documentation, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+For the full protocol specification, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-The VanMoof SA5 and later uses a custom BLE protocol with the following authentication flow:
+The VanMoof S5/A5 uses a custom BLE protocol over a single GATT characteristic (`e3d80001-3416-4a54-b011-68d41fdcbfcf`):
 
-1. **Init Exchange** - Bike sends initialization message, client echoes back
-2. **Certificate Submission** - Client sends CA-signed certificate containing CBOR payload
-3. **Challenge-Response** - Bike sends 16-byte challenge, client signs with Ed25519 private key
-4. **Authentication Confirmed** - Bike confirms with `{auth: true}`
+1. **Init Exchange** - Bike sends `{enc: false, auth: false}`, client echoes back
+2. **Certificate** - Client sends CA-signed certificate (64-byte signature + CBOR payload)
+3. **Challenge-Response** - Bike sends 16-byte nonce, client signs with Ed25519 key
+4. **Confirmation** - Bike confirms with `{auth: true}`
 
-### Key UUIDs
-- **Service/Characteristic**: `e3d80001-3416-4a54-b011-68d41fdcbfcf`
+### Packet Format
 
-### Packet Structure
-- Byte 0: Message type (0x80/0x81/0x82) - must match bike's initial response
-- Byte 1: Reserved (0x00)
-- Byte 2: Payload length (varies by certificate size)
-- Byte 3: Command type
-- Byte 4+: Payload (often CBOR encoded)
+```
+[frame_byte] [0x00] [module/length] [subtype] [payload...]
+
+Modules:  0x02 = Read    0x03 = Write    0x04 = Configure
+```
+
+### Command Groups
+
+| Group | Hex    | Commands                                 |
+|-------|--------|------------------------------------------|
+| Security | `0x01` | Lock, alarm, lights, sounds           |
+| Sound    | `0x02` | Bell, horn                            |
+| Ride     | `0x03` | Power on/off, boost                   |
+| Config   | `0x30` | Assist level, speed region            |
 
 ## Extracting Credentials for debugging
 
@@ -233,17 +246,6 @@ These scripts are for analyzing the VanMoof Android app to understand the BLE pr
 ```bash
 frida -U -f nl.samsonit.vanmoofapp -l frida/ble_sniffer.js
 ```
-
-### Available Scripts
-
-| Script | Description |
-|--------|-------------|
-| `ble_sniffer.js` | Captures all BLE traffic (TX/RX) |
-| `sniff_gatt.js` | Basic GATT write monitor with stack traces |
-| `hook_dispatcher.js` | Hooks the command dispatcher class |
-| `deep_scan.js` | Explores internal object structures |
-| `dump_security.js` | Extracts encryption keys and IVs |
-| `dump_security_v3.js` | Low-level security state extraction |
 
 ## Contributing
 
