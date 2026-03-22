@@ -1,5 +1,5 @@
 """
-ride.py - VanMoof S5/A5 BLE ride/power control commands
+ride.py - VanMoof S5/A5/S6 BLE ride/power control commands
 
 Provides functions to control power and boost features on the bike.
 

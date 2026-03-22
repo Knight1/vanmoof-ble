@@ -1,6 +1,6 @@
 # VanMoof BLE Communication
 
-A Python tool for communicating with VanMoof S5 and A5 e-bikes via Bluetooth Low Energy (BLE). Authenticate, control, and query your bike directly from any computer or device with Bluetooth.
+A Python tool for communicating with VanMoof S5, A5, and S6 e-bikes via Bluetooth Low Energy (BLE). Authenticate, control, and query your bike directly from any computer or device with Bluetooth.
 
 ## Features
 
@@ -20,7 +20,7 @@ A Python tool for communicating with VanMoof S5 and A5 e-bikes via Bluetooth Low
 
 ## Prerequisites
 
-- VanMoof S5 or A5 bike
+- VanMoof S5, A5, or S6 bike
 - Python 3.8+
 - Bluetooth Low Energy capable device
 - Bike certificate and private key (see [vanmoof-certificates](https://github.com/Knight1/vanmoof-certificates))

@@ -46,11 +46,29 @@ except ImportError:
     sys.exit("pip install cryptography")
 
 
-VANMOOF_CHAR_UUID = "e3d80001-3416-4a54-b011-68d41fdcbfcf"
+# S5/A5 BLE UUIDs
+S5A5_SERVICE_UUID     = "8e7f1a50-087a-44c9-b292-a2c628fdd9aa"
+S5A5_CHAR_FUNCTIONS   = "8e7f1a53-087a-44c9-b292-a2c628fdd9aa"
+S5A5_CHAR_CHALLENGE   = "8e7f1a51-087a-44c9-b292-a2c628fdd9aa"
+S5A5_CHAR_PARAMETERS  = "8e7f1a54-087a-44c9-b292-a2c628fdd9aa"
+
+# S6 BLE UUIDs (Command Service)
+S6_SERVICE_UUID       = "6acb5500-e631-4069-944d-b8ca7598ad50"
+S6_SECURITY_SERVICE   = "6acb5520-e631-4069-944d-b8ca7598ad50"
+S6_CHAR_CHALLENGE     = "6acb5522-e631-4069-944d-b8ca7598ad50"
+S6_CHAR_LOCK          = "6acb5501-e631-4069-944d-b8ca7598ad50"
+S6_CHAR_ERROR         = "6acb5508-e631-4069-944d-b8ca7598ad50"
+
+# Alternate S5/A5 UUID (early firmware)
+S5A5_ALT_SERVICE_UUID = "e3d80000-3416-4a54-b011-68d41fdcbfcf"
+S5A5_ALT_CHAR_UUID    = "e3d80001-3416-4a54-b011-68d41fdcbfcf"
+
+# Known service UUID prefixes for BLE scanning
+KNOWN_SERVICE_PREFIXES = ["8e7f1a5", "e3d8", "6acb", "f000550"]
 
 
 class VanMoofClient:
-    """BLE client for VanMoof S5/A5 bikes."""
+    """BLE client for VanMoof S5/A5/S6 bikes."""
 
     def __init__(self, creds: Credentials, debug: bool = False,
                  timestamp: bool = False):
@@ -58,7 +76,8 @@ class VanMoofClient:
         self.debug = debug
         self.timestamp = timestamp
         self.client: BleakClient = None
-        self.char_uuid = VANMOOF_CHAR_UUID
+        self.char_uuid = S5A5_CHAR_FUNCTIONS
+        self.bike_model = None  # "S5A5", "S6", or None
         self.responses: asyncio.Queue = asyncio.Queue()
         self.connected = False
         self.authenticated = False
@@ -87,9 +106,12 @@ class VanMoofClient:
             if any(x in name.upper() for x in ["VANMOOF", "SVTB"]):
                 found_device = dev
                 found_event.set()
-            elif adv.service_uuids and any("e3d8" in u for u in adv.service_uuids):
-                found_device = dev
-                found_event.set()
+            elif adv.service_uuids:
+                for u in adv.service_uuids:
+                    if any(p in u.lower() for p in KNOWN_SERVICE_PREFIXES):
+                        found_device = dev
+                        found_event.set()
+                        break
 
         scanner = BleakScanner(detection_callback=cb)
         await scanner.start()
@@ -182,14 +204,39 @@ class VanMoofClient:
             self.connected = True
             print("   Connected")
 
-            # Find the VanMoof characteristic
+            # Auto-detect bike model from available GATT services
+            self.char_uuid = None
             for svc in self.client.services:
+                svc_lower = svc.uuid.lower()
                 for char in svc.characteristics:
                     if "e3d80001" in char.uuid.lower():
                         self.char_uuid = char.uuid
+                        self.bike_model = "S5A5"
+                    # S6 command service
+                    elif "6acb5500" in svc_lower or "6acb5520" in svc_lower:
+                        if "6acb55" in char_lower and not self.char_uuid:
+                            self.char_uuid = char.uuid
+                            self.bike_model = "S6"
+
+            if not self.char_uuid:
+                # Fallback: use first VanMoof-looking characteristic
+                for svc in self.client.services:
+                    for char in svc.characteristics:
+                        for p in KNOWN_SERVICE_PREFIXES:
+                            if p in char.uuid.lower():
+                                self.char_uuid = char.uuid
+                                break
+                        if self.char_uuid:
+                            break
+
+            if not self.char_uuid:
+                self.char_uuid = S5A5_CHAR_FUNCTIONS
+
+            model_str = f" ({self.bike_model})" if self.bike_model else ""
+            self.log(f"Using characteristic: {self.char_uuid}{model_str}")
 
             await self.client.start_notify(self.char_uuid, self._on_notify)
-            print("   Notifications enabled")
+            print(f"   Notifications enabled{model_str}")
             return True
         except Exception as e:
             print(f"   Connection failed: {e}")
