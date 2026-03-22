@@ -84,6 +84,79 @@ Once connected and authenticated, the following commands are available:
 | `disarm`  | Disarm (disable) alarm   | `81 00 03 01 01 A0 00`  |
 | `alarm`   | Trigger alarm sound      | `81 00 03 01 02 A0 01`  |
 
+### Sound
+
+| Command       | Description              | BLE Packet (hex)        |
+|---------------|--------------------------|-------------------------|
+| `bell`        | Single bell ding         | `81 00 03 02 00 A0 01`  |
+| `bell2`       | Double bell ding         | `81 00 03 02 00 A0 02`  |
+| `horn`        | Horn sound               | `81 00 03 02 01 A0 01`  |
+| `beep`        | Play default sound       | `81 00 03 01 00 21 01`  |
+| `sound <N>`   | Play sound by ID         | `81 00 03 01 00 21 <N>` |
+
+### Ride Control
+
+| Command    | Description              | BLE Packet (hex)        |
+|------------|--------------------------|-------------------------|
+| `poweron`  | Power on electronics     | `81 00 03 03 00 A0 01`  |
+| `poweroff` | Power off electronics    | `81 00 03 03 00 A0 00`  |
+| `booston`  | Enable boost mode        | `81 00 03 03 01 A0 01`  |
+| `boostoff` | Disable boost mode       | `81 00 03 03 01 A0 00`  |
+
+### Power & Configuration
+
+| Command                 | Description              | BLE Packet (hex)        |
+|-------------------------|--------------------------|-------------------------|
+| `power <0-4>`           | Set assist level         | `81 00 04 30 00 A0 <N>` |
+| `lights <off\|on\|auto>` | Set light mode           | `81 00 03 01 00 6B <N>` |
+| `region <eu\|us\|jp>`    | Set speed region         | `81 00 04 30 01 A0 <N>` |
+
+### Telemetry (Real-time Sensor Data)
+
+The bike streams real-time telemetry via BLE notifications when powered on. Available sensors vary by model and firmware version.
+
+| Command       | Description                                        |
+|---------------|----------------------------------------------------|
+| `monitor`     | Start live telemetry display (Ctrl+C to stop)      |
+| `sensors`     | Show last known sensor readings                    |
+| `subscribe`   | Activate telemetry stream (powers on bike)         |
+
+Available sensor readings:
+
+| Sensor         | Description                      | Unit   |
+|----------------|----------------------------------|--------|
+| Speed          | Current bike speed               | km/h   |
+| Pedal RPM      | Pedal cadence                    | RPM    |
+| Pedal Torque   | Pedal torque                     | Nm     |
+| Boost Button   | Boost button pressed             | -      |
+| Battery        | Battery charge level             | %      |
+| Assist Level   | Current motor assist level       | 0-4    |
+| Motor Temp     | Motor temperature                | C      |
+| Driver Temp    | Motor driver/controller temp     | C      |
+| Module Temp    | Main module temperature          | C      |
+| Light Sensor   | Ambient light level              | -      |
+| Humidity       | Humidity sensor                  | %      |
+| Air Quality    | Air quality index (S6)           | AQI    |
+
+### Information
+
+| Command            | Description                                   |
+|--------------------|-----------------------------------------------|
+| `status`           | Show last received CBOR status                |
+| `info`             | Show bike info (credentials, GATT device info)|
+| `battery`          | Query battery level                           |
+| `services`         | List all BLE GATT services and characteristics|
+| `query <target>`   | Query specific state (see below)              |
+
+Query targets: `lock`, `alarm`, `lights`, `power`, `boost`, `level`, `region`, `battery`, `all`
+
+### Utility
+
+| Command            | Description                                   |
+|--------------------|-----------------------------------------------|
+| `raw <hex>`        | Send raw hex bytes (e.g., `raw 81 00 03 01 00 A0 01`) |
+| `help`             | Show all available commands                   |
+| `quit`             | Disconnect and exit                           |
 
 ## Project Structure
 
