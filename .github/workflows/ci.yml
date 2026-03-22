@@ -25,7 +25,20 @@ jobs:
       run: pip install -r requirements.txt
 
     - name: Check syntax
-      run: python -m py_compile main.py
+      run: |
+        python -m py_compile main.py
+        python -m py_compile utils/credentials_utils.py
+        python -m py_compile utils/crypto_utils.py
+        python -m py_compile utils/protocol_utils.py
+        python -m py_compile commands/lock.py
+        python -m py_compile commands/alarm.py
+        python -m py_compile commands/sound.py
+        python -m py_compile commands/power.py
+        python -m py_compile commands/ride.py
+        python -m py_compile commands/lights.py
+        python -m py_compile commands/info.py
+        python -m py_compile commands/region.py
+        python -m py_compile commands/telemetry.py
 
     - name: Run help
       run: python main.py --help
