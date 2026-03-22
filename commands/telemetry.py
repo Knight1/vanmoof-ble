@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Telemetry - Real-time Sensor Data
+VanMoof S5/A5/S6 BLE Telemetry - Real-time Sensor Data
 
 The bike streams real-time telemetry data via BLE notifications while
 riding. This module provides a live monitor that captures, parses, and
@@ -179,28 +179,23 @@ async def subscribe_telemetry(client):
     """
     Request the bike to start streaming telemetry data.
 
-    The bike normally sends status updates after state changes.
-    Powering on the bike electronics activates the telemetry stream
-    which includes speed, cadence, temperatures, and other sensor data.
+    The bike sends CBOR status updates via notifications. This function
+    subscribes to those updates. Use 'poweron' separately if the bike
+    needs to be powered on first.
     """
     if not client.authenticated:
         print("   Not authenticated")
         return
 
-    # Power on bike to activate sensors and telemetry stream
-    print("\nActivating telemetry stream...")
-    print("   Sending power-on to activate sensors...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x03, 0x00, 0xA0, 0x01])
-    await client.send(cmd, "power on (telemetry)")
-    await asyncio.sleep(0.5)
+    print("\nListening for telemetry data...")
+    print("   Sensor data will appear as the bike sends it.")
+    print("   Use 'poweron' if the bike is not yet powered on.")
 
-    # Drain any immediate responses
+    # Drain any queued responses
     for _ in range(5):
         resp = await client.recv(0.3)
         if not resp:
             break
-
-    print("   Telemetry active. Sensor data will appear as the bike sends it.")
 
 
 async def start_monitor(client):
@@ -223,9 +218,8 @@ async def start_monitor(client):
     print("   Press Ctrl+C to stop")
     print("=" * 45)
 
-    # Activate telemetry if not already active
-    if not client.last_status.get("enabled"):
-        await subscribe_telemetry(client)
+    print("\n   Listening for status updates from the bike.")
+    print("   Use 'poweron' first if the bike is not streaming data.\n")
 
     last_snapshot = {}
     update_count = 0

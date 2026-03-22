@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE credentials utilities
+VanMoof S5/A5/S6 BLE credentials utilities
 
 Loads and validates credentials from base64-encoded strings.
 

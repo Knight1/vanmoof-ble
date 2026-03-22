@@ -1,1 +1,1 @@
-"""VanMoof S5/A5 BLE command modules."""
+"""VanMoof S5/A5/S6 BLE command modules."""

@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE cryptographic utilities
+VanMoof S5/A5/S6 BLE cryptographic utilities
 
 Provides functions for key loading and challenge signing.
 

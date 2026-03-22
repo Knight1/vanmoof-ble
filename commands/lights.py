@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Light Commands
+VanMoof S5/A5/S6 BLE Light Commands
 
 Provides function to set the bike's light mode via BLE.
 

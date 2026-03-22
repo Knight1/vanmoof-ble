@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Power Level Commands
+VanMoof S5/A5/S6 BLE Power Level Commands
 
 Provides function to set the bike's power assist level via BLE.
 

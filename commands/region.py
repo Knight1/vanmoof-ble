@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Region Commands
+VanMoof S5/A5/S6 BLE Region Commands
 
 Control the speed region setting which determines the maximum motor
 assist speed.

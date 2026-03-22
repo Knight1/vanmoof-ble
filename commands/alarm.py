@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Alarm Commands
+VanMoof S5/A5/S6 BLE Alarm Commands
 
 Provides functions to arm, disarm, and trigger the alarm via BLE.
 
@@ -23,9 +23,9 @@ import asyncio
 async def arm_alarm(client):
     """Arm (enable) the bike alarm (BLE: 81 00 03 01 01 A0 01)"""
     if not client.authenticated:
-        print("   ❌ Not authenticated")
+        print("   Not authenticated")
         return
-    print("\n🚨 Arming alarm...")
+    print("\nArming alarm...")
     cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x01])
     await client.send(cmd, "arm alarm")
     await asyncio.sleep(0.5)
@@ -37,9 +37,9 @@ async def arm_alarm(client):
 async def disarm_alarm(client):
     """Disarm (disable) the bike alarm (BLE: 81 00 03 01 01 A0 00)"""
     if not client.authenticated:
-        print("   ❌ Not authenticated")
+        print("   Not authenticated")
         return
-    print("\n🔕 Disarming alarm...")
+    print("\nDisarming alarm...")
     cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x00])
     await client.send(cmd, "disarm alarm")
     await asyncio.sleep(0.5)
@@ -51,9 +51,9 @@ async def disarm_alarm(client):
 async def trigger_alarm_sound(client):
     """Trigger the immediate alarm sound (BLE: 81 00 03 01 02 A0 01)"""
     if not client.authenticated:
-        print("   ❌ Not authenticated")
+        print("   Not authenticated")
         return
-    print("\n🔔 Triggering alarm sound...")
+    print("\nTriggering alarm sound...")
     cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x02, 0xA0, 0x01])
     await client.send(cmd, "trigger alarm")
     await asyncio.sleep(0.5)

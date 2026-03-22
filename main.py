@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VanMoof S5/A5 BLE Client
+VanMoof S5/A5/S6 BLE Client
 
 Communicates with VanMoof S5 and A5 bikes over Bluetooth Low Energy.
 Supports authentication, bike control, status queries, and more.
@@ -513,7 +513,7 @@ async def handle_command(cmd: str, client: VanMoofClient):
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="VanMoof S5/A5 BLE Client",
+        description="VanMoof S5/A5/S6 BLE Client",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

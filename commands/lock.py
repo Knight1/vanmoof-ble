@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Lock/Unlock Commands
+VanMoof S5/A5/S6 BLE Lock/Unlock Commands
 
 Provides functions to lock and unlock the bike via BLE.
 

@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Information & Status Commands
+VanMoof S5/A5/S6 BLE Information & Status Commands
 
 Query bike state, read device information, and display status.
 
@@ -51,6 +51,9 @@ DIS_CHARS = {
 async def _send_read(client, group: int, sub: int, param: int,
                      label: str = "") -> list:
     """Send a read command and collect responses."""
+    if not client.connected:
+        print("   Not connected")
+        return []
     cmd = bytes([0x81, 0x00, 0x02, group, sub, param])
     await client.send(cmd, label or "read")
     await asyncio.sleep(0.3)
@@ -132,18 +135,21 @@ async def query_battery(client):
     print("\nQuerying battery...")
 
     # Try standard BLE Battery Service
-    if client.client:
-        for svc in client.client.services:
-            for char in svc.characteristics:
-                if "2a19" in char.uuid.lower():
-                    try:
-                        data = await client.client.read_gatt_char(char.uuid)
-                        if data:
-                            level = data[0]
-                            print(f"   Battery: {level}%")
-                            return level
-                    except Exception as e:
-                        client.log(f"Battery service read failed: {e}")
+    if client.client and client.connected:
+        try:
+            for svc in client.client.services:
+                for char in svc.characteristics:
+                    if "2a19" in char.uuid.lower():
+                        try:
+                            data = await client.client.read_gatt_char(char.uuid)
+                            if data:
+                                level = data[0]
+                                print(f"   Battery: {level}%")
+                                return level
+                        except Exception as e:
+                            client.log(f"Battery service read failed: {e}")
+        except Exception as e:
+            client.log(f"Service enumeration failed: {e}")
 
     # Fallback: protocol read command
     await _send_read(client, 0x0E, 0x00, 0xA0, "read battery")
@@ -169,6 +175,9 @@ async def query_all(client):
         query_battery,
     ]
     for q in queries:
+        if not client.connected:
+            print("\n   Disconnected, stopping queries.")
+            break
         await q(client)
         await asyncio.sleep(0.2)
 
@@ -182,14 +191,19 @@ async def read_device_info(client):
     Reads from the Device Information Service (0x180A) and Battery
     Service (0x180F) if available. Returns a dict of discovered info.
     """
-    if not client.client:
+    if not client.client or not client.connected:
         print("   Not connected")
         return {}
 
     info = {}
     found_any = False
 
-    for svc in client.client.services:
+    try:
+        services = client.client.services
+    except Exception:
+        return info
+
+    for svc in services:
         for char in svc.characteristics:
             uuid_lower = char.uuid.lower()
 
@@ -220,7 +234,7 @@ async def read_device_info(client):
 
 async def list_services(client):
     """List all GATT services and characteristics on the connected device."""
-    if not client.client:
+    if not client.client or not client.connected:
         print("   Not connected")
         return
 

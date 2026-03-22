@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE protocol utilities
+VanMoof S5/A5/S6 BLE protocol utilities
 
 Provides functions for building protocol packets: headers, authentication,
 read commands, write commands, and configuration commands.

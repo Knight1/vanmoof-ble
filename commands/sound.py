@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5 BLE Sound/Feedback Commands
+VanMoof S5/A5/S6 BLE Sound/Feedback Commands
 
 Provides functions to trigger bell, horn, and generic sounds on VanMoof bikes via BLE.
 
