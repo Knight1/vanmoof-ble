@@ -1,181 +1,146 @@
-# VanMoof S5/A5 BLE Authentication Protocol
+# VanMoof S5/A5 BLE Protocol Reference
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Protocol Summary](#protocol-summary)
-4. [Detailed Protocol Analysis](#detailed-protocol-analysis)
-5. [Certificate Structure](#certificate-structure)
-6. [Authentication Flow](#authentication-flow)
-7. [Command Reference](#command-reference)
-8. [Implementation](#implementation)
-9. [Troubleshooting](#troubleshooting)
+2. [BLE Service Information](#ble-service-information)
+3. [Packet Structure](#packet-structure)
+4. [Authentication](#authentication)
+5. [Certificate Format](#certificate-format)
+6. [Command Reference](#command-reference)
+7. [Read Commands (Queries)](#read-commands-queries)
+8. [Status Messages](#status-messages)
+9. [Encryption (Optional)](#encryption-optional)
+10. [Response Parsing](#response-parsing)
+11. [Troubleshooting](#troubleshooting)
+12. [Security Notes](#security-notes)
 
 ---
 
 ## Overview
 
-The VanMoof SA5 and later bikes uses Bluetooth Low Energy (BLE) for communication with the official app. This document describes the complete authentication protocol, allowing third-party tools to connect to and control the bike.
+The VanMoof S5 and A5 e-bikes use Bluetooth Low Energy (BLE) for communication. All commands and responses flow through a single custom GATT characteristic using a binary protocol with CBOR-encoded status payloads.
 
-### Key Discoveries
+### Key Properties
 
-- Authentication uses **Ed25519** digital signatures
-- Certificates are issued by VanMoof's API and signed by their Certificate Authority (CA)
-- The protocol uses a **challenge-response** mechanism
-- Each user/device has a unique Ed25519 keypair
-- The bike accepts multiple valid certificates
+- **Authentication**: Ed25519 digital signatures with certificate-based trust
+- **Certificates**: Issued by a Certificate Authority, containing CBOR-encoded metadata
+- **Challenge-Response**: Bike sends a 16-byte nonce, client signs it with Ed25519 private key
+- **Protocol**: Binary frames with CBOR for structured data
+- **Encryption**: Optional AES-128-CBC encrypted sessions (used in some firmware versions)
 
-### Credentials Required
+### Required Credentials
+
 1. **Ed25519 Private Key** (32 or 64 bytes, base64 encoded)
-2. **Certificate** from VanMoof API (base64 encoded)
+2. **Certificate** (base64 encoded, contains CA signature + CBOR payload)
 
 ---
 
-## Protocol Summary
+## BLE Service Information
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    VANMOOF S5 BLE AUTHENTICATION                            │
-├───────────────────────────────────────────────────────────────────────────��─┤
-│                                                                             │
-│  1.  CONNECT                                                                 │
-│     └── Connect to bike's BLE GATT service                                  │
-│                                                                             │
-│  2. INIT                                                                    │
-│     ├── Bike → Client: {enc: false, auth: false}                            │
-│     └── Client → Bike: {enc: false, auth: false}  (echo)                    │
-│                                                                             │
-│  3. CERTIFICATE                                                             │
-│     └── Client → Bike: [CA Signature] + [Certificate CBOR]                  │
-│                                                                             │
-│  4. CHALLENGE                                                               │
-│     └── Bike → Client: 16-byte random nonce                                 │
-│                                                                             │
-│  5. RESPONSE                                                                │
-│     └── Client → Bike:  Ed25519 signature of the challenge                   │
-│                                                                             │
-��  6. CONFIRMATION                                                            │
-│     └── Bike → Client: {enc: false, auth: true}                            │
-│                                                                             │
-│  7. ENCRYPTION (Optional)                                                   │
-│     ├── Client → Bike: A0 + 16-byte phone nonce                            │
-│     ├── Bike → Client: A1 + 16-byte bike nonce                             │
-│     └── IVs derived: TX_IV = NOT(bike_nonce), RX_IV = bike_nonce           │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+| Property             | Value                                        |
+|----------------------|----------------------------------------------|
+| Service UUID         | `e3d80000-3416-4a54-b011-68d41fdcbfcf`       |
+| Characteristic UUID  | `e3d80001-3416-4a54-b011-68d41fdcbfcf`       |
+| Properties           | Write, Notify                                |
+
+All communication happens through this single characteristic. The client writes commands and receives responses via notifications.
 
 ---
 
-## Detailed Protocol Analysis
+## Packet Structure
 
-### BLE Service Information
+### Frame Format
 
-| Property | Value |
-|----------|-------|
-| Service UUID | `e3d80000-3416-4a54-b011-68d41fdcbfcf` |
-| Characteristic UUID | `e3d80001-3416-4a54-b011-68d41fdcbfcf` |
-| Properties | Write, Notify |
-
-### Packet Frame Structure
-
-All packets use a variable-length header:
+Every packet starts with a 2-byte header followed by a type/length byte and a subtype byte:
 
 ```
-┌────────┬────────┬────────┬─────────────────┐
-│ Byte 0 │ Byte 1 │ Byte 2 │ Payload         │
-├────────┼────────┼────────┼─────────────────┤
-│ 0x80   │ 0x00   │ Length │ Bike → Client   │
-│ 0x81   │ 0x00   │ Length │ Client → Bike   │
-│ 0x82   │ 0x00   │ Length │ Bike → Client * │
-└────────┴────────┴────────┴─────────────────┘
-* 0x82 observed in some protocol versions
-* Length must match actual payload size
+Byte 0: Frame byte (direction indicator)
+Byte 1: Reserved (always 0x00)
+Byte 2: Module/Length (context-dependent)
+Byte 3: Command/Subtype
+Byte 4+: Payload
 ```
 
-### Message Types
+### Frame Bytes (Byte 0)
 
-| Cmd | Sub | Direction | Description |
-|-----|-----|-----------|-------------|
-| 0x0D | 0x05 | Both | Status message (CBOR) |
-| 0x10 | 0x04 | Bike→Client | Challenge (16 bytes) |
-| 0x40 | 0x04 | Client→Bike | Challenge response (64 bytes) |
-| Length | 0x03 | Client→Bike | Certificate packet (length varies) |
-| 0x1F | 0x07 | Bike→Client | Connection parameters |
-| 0x03 | 0x01 | Client→Bike | Command (lock/unlock/etc) |
-| 0x07 | 0x01 | Bike→Client | Command response |
+| Value  | Direction       | Description                              |
+|--------|-----------------|------------------------------------------|
+| `0x80` | Bike -> Client  | Standard bike response                   |
+| `0x81` | Client -> Bike  | Standard client command                  |
+| `0x82` | Bike -> Client  | Alternate response (some firmware)       |
+
+The client must match the frame byte used by the bike. During authentication, echo the exact frame byte received in the init message.
+
+### Byte 2: Module vs Length
+
+Byte 2 serves different purposes depending on the message type:
+
+**For commands (write/read/config):**
+
+| Value  | Module     | Purpose                        |
+|--------|------------|--------------------------------|
+| `0x02` | Read       | Query current value            |
+| `0x03` | Write      | Set a value                    |
+| `0x04` | Configure  | Set persistent configuration   |
+
+**For protocol messages (auth, status):**
+
+Byte 2 is the payload length (number of bytes after byte 3):
+
+| Example          | Byte 2 | Meaning                       |
+|------------------|--------|-------------------------------|
+| Challenge        | `0x10` | 16 bytes of challenge data    |
+| Challenge resp.  | `0x40` | 64 bytes of signature         |
+| Certificate      | varies | Certificate data length       |
+| Status           | varies | CBOR payload length           |
+
+### Message Types (Byte 2 + Byte 3 combinations)
+
+| Byte 2 | Byte 3 | Direction     | Description                    |
+|--------|--------|---------------|--------------------------------|
+| `0x0D` | `0x05` | Both          | Status message (CBOR)          |
+| `0x10` | `0x04` | Bike->Client  | Authentication challenge       |
+| `0x40` | `0x04` | Client->Bike  | Challenge response (signature) |
+| length | `0x03` | Client->Bike  | Certificate submission         |
+| `0x02` | varies | Client->Bike  | Read command (query)           |
+| `0x03` | varies | Client->Bike  | Write command (set value)      |
+| `0x04` | varies | Client->Bike  | Configuration command          |
+| `0x07` | `0x01` | Bike->Client  | Command response               |
+| `0x1F` | `0x07` | Bike->Client  | Connection parameters          |
 
 ---
 
-## Certificate Structure
+## Authentication
 
-### API Certificate Format
-
-The certificate from VanMoof's API is structured as: 
+### Flow Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    API Certificate                          │
-├─────────────────────────────────────────────────────────────┤
-│ Bytes 0-63:    Ed25519 Signature (CA signed)                 │
-│ Bytes 64+:    CBOR Payload                                  │
-└─────────────────────────────────────────────────────────────┘
+Client                                          Bike
+  |                                               |
+  |            1. Connect (BLE GATT)              |
+  |<--------------------------------------------->|
+  |                                               |
+  |         2. Init {enc: false, auth: false}      |
+  |<----------------------------------------------|
+  |                                               |
+  |         3. Echo init back                      |
+  |---------------------------------------------->|
+  |                                               |
+  |         4. Certificate [CA_sig + CBOR]         |
+  |---------------------------------------------->|
+  |                                               |
+  |         5. Challenge (16-byte nonce)           |
+  |<----------------------------------------------|
+  |                                               |
+  |         6. Signed challenge (64-byte sig)      |
+  |---------------------------------------------->|
+  |                                               |
+  |         7. Confirm {enc: false, auth: true}    |
+  |<----------------------------------------------|
 ```
-
-### CBOR Payload Structure
-
-The CBOR payload is a map with 7 fields:
-
-```cbor
-{
-  "i": <cert_id>,        // uint32 - Certificate ID
-  "f": <frame_number>,   // string - Frame number (e.g., "SVTBKLxxxxxOA")
-  "b": <bike_serial>,    // string - Bike serial (same as frame)
-  "e": <expiry>,         // uint32 - Unix timestamp expiry
-  "r": <role>,           // uint8  - Access role (7 = owner)
-  "u": <user_id>,        // bytes  - 16-byte UUID
-  "p": <public_key>      // bytes  - 32-byte Ed25519 public key
-}
-```
-
-### Example Certificate (Hex)
-
-```
-CA Signature (64 bytes):
-d4b323b3bd2a7760141be6ebfb26d9423050d3078589f690f1528018d5be7e2f
-5e068e39012cfeda5fca58fdf197e3364d7ee8d969e35932249442524be33a00
-
-CBOR Payload (decoded):
-A7                          # map(7)
-   61 69                    # "i"
-   1A 00 01 1F 2F           # 73519 (cert ID)
-   61 66                    # "f"
-   6D 535654424B4C...        # "SVTBKLxxxxxOA"
-   61 62                    # "b"
-   6D 535654424B4C...       # "SVTBKLxxxxxOA"
-   61 65                    # "e"
-   1A 69 6F 67 03           # 1768908547 (expiry)
-   61 72                    # "r"
-   07                       # 7 (owner role)
-   61 75                    # "u"
-   50 1E08DEBC1ON73G344...   # 16-byte user UUID
-   61 70                    # "p"
-   58 20 9F2751608BE6...    # 32-byte public key
-```
-
-### Role Values
-
-| Value | Role | Permissions |
-|-------|------|-------------|
-| 7 | Owner | Full control |
-| 3 | User | Limited access |
-
----
-
-## Authentication Flow
 
 ### Step 1: Connect and Subscribe
 
@@ -189,162 +154,408 @@ await client.connect()
 await client.start_notify(CHAR_UUID, notification_handler)
 ```
 
-### Step 2:  Receive and Echo Init
+### Step 2: Receive and Echo Init
 
-The bike sends an init message: 
+The bike sends an init status message:
+
 ```
 RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
-              │  └─────────────────────────────────────┘
-              │            CBOR:  {enc: false, auth: false}
-              └── Command 0x0D, Subtype 0x05
+                      └── CBOR: {"enc": false, "auth": false}
 ```
 
-Echo it back (keep `81 00` header):
+Echo it back exactly (preserve the frame byte):
+
 ```
 TX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
 ```
 
 ### Step 3: Send Certificate
 
-Build the certificate packet: 
+Build the certificate packet with the full certificate (CA signature + CBOR payload):
+
 ```
-TX: 81 00 [LENGTH] 03 [64-byte CA signature] [CBOR payload]
+TX: [frame_byte] 00 [cert_length] 03 [64-byte CA signature] [CBOR payload]
 ```
 
-**Important:** 
-- The LENGTH byte must match the actual certificate size
-- The CA signature is the ORIGINAL signature from the API certificate, NOT a freshly computed signature!
+- `cert_length`: Length of the certificate data (CA signature + CBOR)
+- `0x03`: Certificate subtype identifier
+- The CA signature is the original signature from the certificate, not recomputed
 
 ```python
-def build_auth_packet(ca_signature: bytes, cert_cbor: bytes) -> bytes:
-    cert_data = ca_signature + cert_cbor  # Combine signature and CBOR
-    packet = bytearray([0x81, 0x00, len(cert_data), 0x03])
+def build_auth_packet(ca_signature, cert_cbor, first_byte=0x81):
+    cert_data = ca_signature + cert_cbor
+    packet = bytearray([first_byte, 0x00, len(cert_data), 0x03])
     packet.extend(cert_data)
     return bytes(packet)
 ```
 
 ### Step 4: Receive Challenge
 
-The bike sends a 16-byte random challenge:
+The bike sends a 16-byte random challenge nonce:
+
 ```
 RX: 81 00 10 04 [16 random bytes]
-              │  └── Challenge nonce
-              └── Command 0x10, Subtype 0x04
-
-Example: 
-RX: 81 00 10 04 2A 8D 7A 09 66 A0 FB BF EB 67 E2 64 B5 99 C9 4F
+         |  |    └── Challenge nonce
+         |  └── Subtype 0x04 (challenge)
+         └── Length 0x10 (16 bytes)
 ```
 
 ### Step 5: Sign and Send Response
 
-Sign the 16-byte challenge with your Ed25519 private key: 
+Sign the 16-byte challenge with the Ed25519 private key to produce a 64-byte signature:
 
 ```python
-from cryptography.hazmat.primitives.asymmetric. ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-def build_challenge_response(private_key: Ed25519PrivateKey, challenge: bytes) -> bytes:
-    signature = private_key. sign(challenge)  # 64-byte Ed25519 signature
-    packet = bytearray([0x81, 0x00, 0x40, 0x04])
+def build_challenge_response(private_key, challenge, first_byte=0x81):
+    signature = private_key.sign(challenge)  # 64-byte Ed25519 signature
+    packet = bytearray([first_byte, 0x00, 0x40, 0x04])
     packet.extend(signature)
     return bytes(packet)
 ```
 
 ```
-TX: 81 00 40 04 [64-byte Ed25519 signature]
+TX: [frame_byte] 00 40 04 [64-byte Ed25519 signature]
+                  |  |
+                  |  └── Subtype 0x04 (challenge response)
+                  └── Length 0x40 (64 bytes)
 ```
 
 ### Step 6: Receive Confirmation
 
-The bike confirms authentication:
+The bike confirms successful authentication:
+
 ```
 RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
-                                              │
-                                              └── F5 = true (authenticated!)
+                                                   |
+                                            F5 = true (authenticated!)
+```
+
+CBOR decoded: `{"enc": false, "auth": true}`
+
+---
+
+## Certificate Format
+
+### Structure
+
+The certificate is a binary blob structured as:
+
+```
+┌────────────────────────────────────┐
+│ Bytes 0-63:   CA Signature         │  Ed25519 signature from the CA
+│ Bytes 64+:    CBOR Payload         │  Certificate metadata
+└────────────────────────────────────┘
+```
+
+### CBOR Payload Fields
+
+The CBOR payload is a map with 7 fields:
+
+| Key | Type    | Description                              |
+|-----|---------|------------------------------------------|
+| `i` | uint32  | Certificate ID                           |
+| `f` | string  | Frame number (e.g., "SVTBKLxxxxxOA")     |
+| `b` | string  | Bike serial (typically same as frame)    |
+| `e` | uint32  | Expiry timestamp (Unix epoch, seconds)   |
+| `r` | uint8   | Access role                              |
+| `u` | bytes   | User UUID (16 bytes)                     |
+| `p` | bytes   | Ed25519 public key (32 bytes)            |
+
+### Role Values
+
+| Value | Role   | Permissions                              |
+|-------|--------|------------------------------------------|
+| 7     | Owner  | Full control of all bike functions       |
+| 3     | User   | Limited access (ride, basic controls)    |
+
+### Example CBOR (Annotated Hex)
+
+```
+A7                          # map(7)
+   61 69                    # key: "i"
+   1A 00 01 1F 2F           # value: 73519 (cert ID)
+   61 66                    # key: "f"
+   6D 535654424B4C...       # value: "SVTBKLxxxxxOA" (frame)
+   61 62                    # key: "b"
+   6D 535654424B4C...       # value: "SVTBKLxxxxxOA" (serial)
+   61 65                    # key: "e"
+   1A 69 6F 67 03           # value: 1768908547 (expiry)
+   61 72                    # key: "r"
+   07                       # value: 7 (owner)
+   61 75                    # key: "u"
+   50 [16 bytes]            # value: user UUID
+   61 70                    # key: "p"
+   58 20 [32 bytes]         # value: Ed25519 public key
 ```
 
 ---
 
 ## Command Reference
 
-### Packet Format for Commands
+### Command Packet Format
+
+Write commands (module `0x03`):
 
 ```
-┌────────┬────────┬────────┬────────┬────────┬────────┬────────┐
-│ Header │ Header │ Module │ Command│ Subtype│ Param  │ Value  │
-│ 0x81   │ 0x00   │ 0x03   │ 0x01   │ 0x00   │ varies │ varies │
-└────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+[frame_byte] 00 03 [group] [sub] [param] [value]
 ```
 
+Configuration commands (module `0x04`):
 
+```
+[frame_byte] 00 04 [group] [sub] [param] [value]
+```
 
-### Lock/Unlock/Alarm Commands
+### Command Groups
 
-| Function            | Command (hex)          | Meaning              |
-|---------------------|-----------------------|----------------------|
-| Unlock bike         | 81 00 03 01 00 A0 01  | Unlock main lock     |
-| Lock bike           | 81 00 03 01 00 A0 00  | Lock main lock       |
-| Arm alarm           | 81 00 03 01 01 A0 01  | Enable alarm         |
-| Disarm alarm        | 81 00 03 01 01 A0 00  | Disable alarm        |
-| Trigger alarm sound | 81 00 03 01 02 A0 01  | Immediate alarm      |
+| Group  | Hex    | Description                              |
+|--------|--------|------------------------------------------|
+| Security | `0x01` | Lock, alarm, lights, sounds            |
+| Sound    | `0x02` | Bell, horn                             |
+| Ride     | `0x03` | Power on/off, boost                    |
+| Config   | `0x30` | Assist level, speed region             |
 
+### Sub-commands
 
-### Sound/Feedback Commands
+| Group  | Sub    | Target                                   |
+|--------|--------|------------------------------------------|
+| `0x01` | `0x00` | Lock/Unlock                              |
+| `0x01` | `0x01` | Alarm arm/disarm                         |
+| `0x01` | `0x02` | Alarm trigger                            |
+| `0x02` | `0x00` | Bell                                     |
+| `0x02` | `0x01` | Horn                                     |
+| `0x03` | `0x00` | Power on/off                             |
+| `0x03` | `0x01` | Boost on/off                             |
+| `0x30` | `0x00` | Assist level                             |
+| `0x30` | `0x01` | Speed region                             |
 
-See also: [sound.py](../sound.py)
+### Parameter Types
 
-| Function           | Command (hex)          | Description         |
-|--------------------|-----------------------|---------------------|
-| Bell ding          | 81 00 03 02 00 A0 01  | Bell ding (single)  |
-| Bell double ding   | 81 00 03 02 00 A0 02  | Bell double ding    |
-| Horn sound         | 81 00 03 02 01 A0 01  | Horn sound          |
+| Param  | Hex    | Purpose                                  |
+|--------|--------|------------------------------------------|
+| State  | `0xA0` | On/off toggle, level values              |
+| Light  | `0x6B` | Light mode control                       |
+| Sound  | `0x21` | Sound ID selection                       |
 
-Command group `0x02` = sound/feedback
+### Lock / Unlock
 
-### Ride/Power Control Commands
+| Command         | Packet (hex)            | Description              |
+|-----------------|-------------------------|--------------------------|
+| Unlock          | `81 00 03 01 00 A0 01`  | Unlock the bike          |
+| Lock            | `81 00 03 01 00 A0 00`  | Lock the bike            |
 
-See also: [ride.py](../ride.py)
+### Alarm
 
-| Function         | Command (hex)          | Description         |
-|------------------|-----------------------|---------------------|
-| Power on bike    | 81 00 03 03 00 A0 01  | Power on bike       |
-| Power off bike   | 81 00 03 03 00 A0 00  | Power off bike      |
-| Enable boost     | 81 00 03 03 01 A0 01  | Enable boost mode   |
-| Disable boost    | 81 00 03 03 01 A0 00  | Disable boost mode  |
+| Command           | Packet (hex)            | Description            |
+|-------------------|-------------------------|------------------------|
+| Arm alarm         | `81 00 03 01 01 A0 01`  | Enable alarm           |
+| Disarm alarm      | `81 00 03 01 01 A0 00`  | Disable alarm          |
+| Trigger alarm     | `81 00 03 01 02 A0 01`  | Trigger alarm sound    |
 
-Command group `0x03` = ride/power control
+### Sound / Bell
 
-### Power Level Commands
+| Command           | Packet (hex)            | Description            |
+|-------------------|-------------------------|------------------------|
+| Bell (single)     | `81 00 03 02 00 A0 01`  | Single bell ding       |
+| Bell (double)     | `81 00 03 02 00 A0 02`  | Double bell ding       |
+| Horn              | `81 00 03 02 01 A0 01`  | Horn sound             |
+| Play sound        | `81 00 03 01 00 21 XX`  | Play sound by ID       |
 
-| Power Level | Packet |
-|-------------|--------|
-| Off | `81 00 04 30 00 A0 00` |
-| Level 1 | `81 00 04 30 00 A0 01` |
-| Level 2 | `81 00 04 30 00 A0 02` |
-| Level 3 | `81 00 04 30 00 A0 03` |
-| Level 4 | `81 00 04 30 00 A0 04` |
+### Lights
 
-### Light Commands
+| Command           | Packet (hex)            | Description            |
+|-------------------|-------------------------|------------------------|
+| Lights off        | `81 00 03 01 00 6B 00`  | Turn lights off        |
+| Lights on         | `81 00 03 01 00 6B 01`  | Always on              |
+| Lights auto       | `81 00 03 01 00 6B 03`  | Automatic / sensor     |
 
-| Light Mode | Packet |
-|------------|--------|
-| Off | `81 00 03 01 00 6B 00` |
-| Always On | `81 00 03 01 00 6B 01` |
-| Auto/Pulse | `81 00 03 01 00 6B 03` |
+Light mode values:
 
-### Sound Commands
+| Value | Mode                                            |
+|-------|-------------------------------------------------|
+| `0x00` | Off                                            |
+| `0x01` | Always on                                      |
+| `0x03` | Auto (sensor-triggered)                        |
 
-| Command | Packet |
-|---------|--------|
-| Play sound 1 | `81 00 03 01 00 21 01` |
-| Play sound 2 | `81 00 03 01 00 21 02` |
+### Ride Control
+
+| Command           | Packet (hex)            | Description            |
+|-------------------|-------------------------|------------------------|
+| Power on          | `81 00 03 03 00 A0 01`  | Power on electronics   |
+| Power off         | `81 00 03 03 00 A0 00`  | Power off electronics  |
+| Enable boost      | `81 00 03 03 01 A0 01`  | Enable boost mode      |
+| Disable boost     | `81 00 03 03 01 A0 00`  | Disable boost mode     |
+
+### Power Assist Level
+
+Uses configuration module `0x04`:
+
+| Level   | Packet (hex)            | Description            |
+|---------|-------------------------|------------------------|
+| Off     | `81 00 04 30 00 A0 00`  | No motor assist        |
+| Level 1 | `81 00 04 30 00 A0 01`  | Lowest assist          |
+| Level 2 | `81 00 04 30 00 A0 02`  | Medium-low assist      |
+| Level 3 | `81 00 04 30 00 A0 03`  | Medium-high assist     |
+| Level 4 | `81 00 04 30 00 A0 04`  | Maximum assist         |
+
+Note: Changing the power level requires the bike to be unlocked and powered on.
+
+### Speed Region
+
+Uses configuration module `0x04`, config group `0x30`, subcommand `0x01`:
+
+| Region  | Packet (hex)            | Max Speed              |
+|---------|-------------------------|------------------------|
+| EU      | `81 00 04 30 01 A0 00`  | 25 km/h                |
+| US      | `81 00 04 30 01 A0 01`  | 32 km/h                |
+| JP      | `81 00 04 30 01 A0 02`  | 24 km/h                |
+
+---
+
+## Read Commands (Queries)
+
+Read commands use module `0x02` to query the current value of any settable parameter. They follow the same group/sub/param structure as write commands but without a value byte:
+
+```
+[frame_byte] 00 02 [group] [sub] [param]
+```
+
+The bike responds via a command response message (`07 01`) or a CBOR status update (`0D 05`).
+
+### Available Read Commands
+
+| Query            | Packet (hex)       | Description               |
+|------------------|--------------------|---------------------------|
+| Lock state       | `81 00 02 01 00 A0` | Is the bike locked?      |
+| Alarm state      | `81 00 02 01 01 A0` | Is the alarm armed?      |
+| Light mode       | `81 00 02 01 00 6B` | Current light setting    |
+| Power state      | `81 00 02 03 00 A0` | Is the bike powered on?  |
+| Boost state      | `81 00 02 03 01 A0` | Is boost enabled?        |
+| Assist level     | `81 00 02 30 00 A0` | Current assist level     |
+| Speed region     | `81 00 02 30 01 A0` | Current speed region     |
+
+### Response Format
+
+Command responses arrive as notifications with bytes 2-3 = `07 01`:
+
+```
+RX: 80 00 07 01 [group] [sub] [param] [value...]
+```
+
+---
+
+## Status Messages
+
+The bike sends CBOR-encoded status messages automatically during authentication and after state changes. These use message type `0x0D 0x05`.
+
+### Format
+
+```
+[frame_byte] 00 [length] 05 [CBOR data]
+```
+
+The CBOR data uses an indefinite-length map (starts with `0xBF`, ends with `0xFF`).
+
+### Known Status / Telemetry Fields
+
+The bike streams CBOR telemetry data via notifications when powered on. The set of fields varies by model and firmware version. All known fields:
+
+**Connection State:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `enc`       | bool    | Encryption enabled                       |
+| `auth`      | bool    | Authentication status                    |
+| `enabled`   | bool    | Bike electronics powered on              |
+| `ready`     | bool    | Bike ready for commands                  |
+
+**Bike State:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `locked`    | bool    | Lock state                               |
+| `alarm`     | bool    | Alarm armed                              |
+| `boost`     | bool    | Boost mode active                        |
+| `boost_btn` | bool    | Boost button currently pressed           |
+| `pwr`       | int     | Assist level (0-4)                       |
+| `light`     | int     | Light mode (0=off, 1=on, 3=auto)         |
+| `gear`      | int     | Current gear                             |
+| `region`    | int     | Speed region setting                     |
+| `err`       | int     | Error code (0 = no error)                |
+
+**Motion Sensors:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `spd`       | float   | Current speed (km/h)                     |
+| `cad`       | int     | Pedal cadence / RPM                      |
+| `torque`    | float   | Pedal torque (Nm)                        |
+
+**Battery & Power:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `bat`       | int     | Battery level (percentage)               |
+| `charging`  | bool    | Battery currently charging               |
+
+**Temperature Sensors:**
+
+| Key           | Type  | Description                              |
+|---------------|-------|------------------------------------------|
+| `motor_temp`  | int   | Motor temperature (C)                    |
+| `driver_temp` | int   | Motor driver/controller temperature (C)  |
+| `module_temp` | int   | Main module temperature (C)              |
+| `temp`        | int   | General temperature (C)                  |
+
+**Environment Sensors:**
+
+| Key           | Type  | Description                              |
+|---------------|-------|------------------------------------------|
+| `light`       | int   | Ambient light sensor value               |
+| `humidity`    | int   | Humidity (%)                             |
+| `air_quality` | int   | Air quality index (S6)                   |
+
+**Distance:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `dst`       | float   | Trip distance (km)                       |
+| `odo`       | float   | Odometer total (km)                      |
+
+**Device Info:**
+
+| Key         | Type    | Description                              |
+|-------------|---------|------------------------------------------|
+| `fw`        | string  | Firmware version                         |
+| `hw`        | string  | Hardware revision                        |
+
+### Init Status Example
+
+```
+BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
+   └─ "enc"  └─false └─ "auth"  └─false └─ end map
+```
+
+Decoded: `{"enc": false, "auth": false}`
+
+### Authenticated Status Example
+
+```
+BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
+```
+
+Decoded: `{"enc": false, "auth": true}`
 
 ---
 
 ## Encryption (Optional)
 
-After authentication, an optional AES-128-CBC encrypted session can be established.
+Some firmware versions support (or require) an AES-128-CBC encrypted session after authentication. When encryption is active, the init status shows `{"enc": true, "auth": false}`.
 
 ### Encryption Handshake
+
+After successful authentication:
 
 #### Step 1: Client Sends Encryption Init
 
@@ -352,10 +563,7 @@ After authentication, an optional AES-128-CBC encrypted session can be establish
 TX: A0 [16-byte random nonce]
 ```
 
-Example:
-```
-TX: A0 3E 7B 9F 24 8A 55 91 6D 0C 33 A7 F4 92 B8 61 2F
-```
+The client generates a random 16-byte nonce and sends it with the `0xA0` prefix.
 
 #### Step 2: Bike Responds with Nonce
 
@@ -363,46 +571,83 @@ TX: A0 3E 7B 9F 24 8A 55 91 6D 0C 33 A7 F4 92 B8 61 2F
 RX: A1 [16-byte bike nonce]
 ```
 
-Example:
-```
-RX: A1 92 C4 10 6E 8D 1B F0 73 49 A6 55 2C 18 E9 0F 3A
-```
+The bike responds with its own 16-byte nonce prefixed with `0xA1`.
 
-#### Step 3: Derive IVs
+#### Step 3: Derive Encryption IVs
 
-IVs are derived asymmetrically from the bike nonce:
+IVs are derived asymmetrically from the bike's nonce:
 
 ```python
-# TX IV (phone -> bike): bitwise NOT of bike nonce
-iv_enc = bytes(b ^ 0xFF for b in bike_nonce)
+# TX IV (Client -> Bike): bitwise NOT of bike nonce
+iv_encrypt = bytes(b ^ 0xFF for b in bike_nonce)
 
-# RX IV (bike -> phone): bike nonce as-is
-iv_dec = bike_nonce
+# RX IV (Bike -> Client): bike nonce as-is
+iv_decrypt = bike_nonce
 ```
 
-#### Step 4: Encrypted Frame Format
+### Encrypted Frame Format
 
-All subsequent VM frames are encrypted:
+After the handshake, all subsequent frames are encrypted:
 
 ```
-Plaintext format:
-[length][0x01][VM frame bytes][zero padding to 16-byte boundary]
+Plaintext:  [length] [0x01] [payload bytes] [zero-pad to 16-byte boundary]
+Ciphertext: AES-128-CBC(plaintext, key, iv)
+```
 
-Encrypted with AES-128-CBC, IV chaining:
-iv_enc = last 16 bytes of ciphertext after each encryption
-iv_dec = last 16 bytes of ciphertext after each decryption
+### IV Chaining
+
+After each encryption/decryption operation, the IV is updated to the last 16 bytes of the ciphertext:
+
+```python
+iv_encrypt = ciphertext[-16:]  # After encrypting
+iv_decrypt = ciphertext[-16:]  # After decrypting
 ```
 
 ### Encryption Parameters
 
-| Parameter | Value |
-|-----------|-------|
-| Cipher | AES-128 |
-| Mode | CBC |
-| Key Size | 16 bytes |
-| IV Size | 16 bytes |
-| Padding | Manual zero padding to 16-byte boundary |
-| IV Update | Chained (last 16 bytes of ciphertext) |
+| Parameter   | Value                                        |
+|-------------|----------------------------------------------|
+| Cipher      | AES-128                                      |
+| Mode        | CBC                                          |
+| Key Size    | 16 bytes (128 bits)                          |
+| IV Size     | 16 bytes (128 bits)                          |
+| Padding     | Zero-pad to 16-byte boundary                 |
+| IV Update   | Chained (last 16 bytes of previous ciphertext) |
+
+---
+
+## Response Parsing
+
+### Command Responses
+
+After sending a write or read command, the bike responds with a command response message:
+
+```
+RX: 80 00 07 01 [group] [sub] [param] [value...]
+              |  |
+              |  └── Mirrors the command's group/sub/param
+              └── Subtype 0x01 (command response)
+```
+
+### CBOR Status Updates
+
+After state changes, the bike also sends CBOR status updates:
+
+```
+RX: 80 00 0D 05 BF [key-value pairs...] FF
+```
+
+Parse using any CBOR library. Look for the `0xBF` marker (indefinite-length map start) to find the CBOR data within the packet.
+
+### Connection Parameters
+
+Some firmware versions send connection parameter messages:
+
+```
+RX: 80 00 1F 07 [CBOR data]
+```
+
+These contain BLE connection timing parameters and can generally be ignored.
 
 ---
 
@@ -410,34 +655,46 @@ iv_dec = last 16 bytes of ciphertext after each decryption
 
 ### Bike Disconnects After Certificate
 
-| Cause | Solution |
-|-------|----------|
-| Wrong packet length | Ensure length byte matches actual certificate size |
-| Wrong CA signature | Use the original signature from the API certificate, don't compute a new one |
-| Key mismatch | Ensure your private key matches the public key in the certificate |
-| Certificate expired | Request a new certificate from the API |
-| Wrong packet header | Use same first byte (0x81/0x82) as bike's initial response |
+| Symptom                    | Solution                                     |
+|----------------------------|----------------------------------------------|
+| Immediate disconnect       | Check that the length byte (byte 2) matches the actual certificate data size |
+| Disconnect after cert sent | Use the original CA signature from the certificate, not a recomputed one |
+| Key mismatch error         | Ensure the private key matches the public key embedded in the certificate |
+| Certificate expired        | Request a new certificate (typically valid for 7 days) |
+| Wrong frame byte           | Use the same frame byte (0x81/0x82) as the bike's init message |
 
 ### No Challenge Received
 
-| Cause | Solution |
-|-------|----------|
-| Didn't echo init | Make sure to echo the init message back with `0x81` header |
-| Wrong packet format | Verify the certificate packet structure |
+| Symptom                    | Solution                                     |
+|----------------------------|----------------------------------------------|
+| No response after cert     | Make sure to echo the init message back before sending the certificate |
+| Timeout waiting            | Verify the certificate packet structure: `[frame] 00 [len] 03 [cert]` |
+| Wrong response type        | Check that notifications are enabled on the characteristic |
 
 ### Auth Rejected After Challenge
 
-| Cause | Solution |
-|-------|----------|
-| Wrong private key | Use the same key that was sent to the API |
-| Signing wrong data | Sign exactly the 16-byte challenge, nothing more |
+| Symptom                    | Solution                                     |
+|----------------------------|----------------------------------------------|
+| Auth false after response  | Use the same private key that was used to generate the certificate |
+| Signature invalid          | Sign exactly the 16-byte challenge, nothing more, nothing less |
+| Wrong signature length     | Ed25519 signatures are always 64 bytes |
+
+### Commands Not Working
+
+| Symptom                    | Solution                                     |
+|----------------------------|----------------------------------------------|
+| No response to commands    | Verify authentication succeeded (`auth: true` in status) |
+| Power level won't change   | Unlock the bike and power on electronics first |
+| Lock won't respond         | Some operations need specific bike states (e.g., stationary) |
 
 ---
 
-## Security Considerations
+## Security Notes
 
-- **Certificates expire** - 7 days, request new ones as needed
-- **The CA signature validates the certificate** - it proves VanMoof authorized this keypair for this specific bike
-- **The challenge-response proves key ownership** - it prevents replay attacks
+- **Certificate expiry**: Certificates are typically valid for 7 days. Request new ones as needed.
+- **CA signature validation**: The bike verifies that the certificate was signed by the trusted Certificate Authority. The CA signature proves the certificate is authorized for the specific bike.
+- **Challenge-response**: The 16-byte random challenge prevents replay attacks. Each authentication session uses a unique challenge.
+- **Key binding**: The Ed25519 public key in the certificate must match the private key used to sign the challenge. This binds the authentication to the specific keypair.
+- **Role-based access**: The certificate's role field (owner=7, user=3) determines which commands are available.
 
 ---
