@@ -162,19 +162,25 @@ Query targets: `lock`, `alarm`, `lights`, `power`, `boost`, `level`, `region`, `
 
 ```
 vanmoof-ble/
-├── main.py                 # Main BLE client application
-├── requirements.txt        # Python dependencies
-├── README.md              # This file
-├── LICENSE                # MIT License
-├── docs/
-│   └── PROTOCOL.md        # Detailed protocol documentation
-└── frida/                 # Frida scripts for Android app analysis
-    ├── ble_sniffer.js     # Full-duplex GATT sniffer
-    ├── sniff_gatt.js      # Basic GATT write monitor
-    ├── hook_dispatcher.js # Dispatcher hook for command tracing
-    ├── deep_scan.js       # Deep object exploration
-    ├── dump_security.js   # Security state extractor
-    └── dump_security_v3.js # Low-level security extraction
+├── main.py                    # Main BLE client application
+├── requirements.txt           # Python dependencies
+├── README.md                  # This file
+├── commands/                  # BLE command modules
+│   ├── alarm.py               # Alarm arm/disarm/trigger
+│   ├── info.py                # Status queries, device info, GATT services
+│   ├── lights.py              # Light mode control
+│   ├── lock.py                # Lock/unlock
+│   ├── power.py               # Assist level control
+│   ├── region.py              # Speed region control (EU/US/JP)
+│   ├── ride.py                # Power on/off, boost
+│   ├── sound.py               # Bell, horn, sounds
+│   └── telemetry.py           # Real-time sensor data streaming
+├── utils/                     # Utility modules
+│   ├── credentials_utils.py   # Certificate parsing & key validation
+│   ├── crypto_utils.py        # Ed25519 signing & key loading
+│   └── protocol_utils.py      # Packet builders (read/write/config/auth)
+└── docs/
+    └── PROTOCOL.md            # Complete BLE protocol reference
 ```
 
 ## Protocol Overview
