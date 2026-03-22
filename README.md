@@ -14,10 +14,10 @@ A collection of tools for communicating with VanMoof S5/A5 e-bikes via Bluetooth
 
 ## Prerequisites
 
-- VanMoof SA5 or later bike
+- VanMoof S5 or A5 bike
 - Python 3.8+
-- Bluetooth Low Energy capable device (Mac, Raspberry Pi 1+, any Linux Computer with latest OS is fine, even Windows works, Android too if you install Python on it)
-- VanMoof bike certificate and private key using [vanmoof-certificates](https://github.com/Knight1/vanmoof-certificates)
+- Bluetooth Low Energy capable device
+- Bike certificate and private key (see [vanmoof-certificates](https://github.com/Knight1/vanmoof-certificates))
 
 ## Installation
 
@@ -34,14 +34,15 @@ pip install -r requirements.txt
 
 ### CLI Options
 
-| Option | Description |
-| ------ | ----------- |
-| `--privkey` | Base64-encoded Ed25519 private key (required unless using only `--scan`). |
-| `--cert` | Base64-encoded VanMoof certificate containing CBOR payload (required unless using only `--scan`). |
-| `--mac` | Bluetooth MAC address of the bike. If omitted, the client scans and picks the first match. |
-| `--scan` | Scan for nearby VanMoof bikes and print their addresses. No authentication attempted. |
-| `--debug` | Enable verbose debug logging. |
-| `--timestamp` | Prefix TX/RX logs with timestamps in `seconds.microseconds` format (6 decimals). |
+| Option           | Description                                                |
+|------------------|------------------------------------------------------------|
+| `--privkey`      | Base64-encoded Ed25519 private key                         |
+| `--cert`         | Base64-encoded certificate (CA signature + CBOR payload)   |
+| `--mac`          | Bluetooth MAC address of the bike                          |
+| `--scan`         | Scan for nearby VanMoof bikes                              |
+| `--debug`        | Enable verbose packet logging                              |
+| `--timestamp`    | Add timestamps to TX/RX logs                               |
+| `--ignore-expiry`| Continue even if the certificate is expired                |
 
 ### Scanning for Bikes
 
@@ -61,31 +62,27 @@ python main.py --privkey "YOUR_BASE64_PRIVATE_KEY" --cert "YOUR_BASE64_CERTIFICA
 python main.py --privkey "..." --cert "..." --mac "XX:XX:XX:XX:XX:XX"
 ```
 
-You need to use the MAC Address since the UUID from the Bike changes after every reboot!  
+The bike's BLE address changes after every reboot. Use `--scan` to find it, or specify `--mac` if you already know it.
 
-### Interactive Commands
+### Debug Mode
 
+```bash
+python main.py --privkey "..." --cert "..." --debug --timestamp
+```
 
-Once connected and authenticated, you can use these commands:
+## Interactive Commands
 
-| Command                | Description                | BLE Packet (hex)         |
-|------------------------|----------------------------|--------------------------|
-| `unlock`               | Unlock the bike            | 81 00 03 01 00 A0 01     |
-| `lock`                 | Lock the bike              | 81 00 03 01 00 A0 00     |
-| `arm`                  | Arm (enable) alarm         | 81 00 03 01 01 A0 01     |
-| `disarm`               | Disarm (disable) alarm     | 81 00 03 01 01 A0 00     |
-| `alarm`                | Trigger alarm sound        | 81 00 03 01 02 A0 01     |
-| `beep`                 | Play a sound               | 81 00 03 01 00 21 01     |
-| `bell`                 | Bell ding                  | 81 00 03 02 00 A0 01     |
-| `bell2`                | Bell double ding           | 81 00 03 02 00 A0 02     |
-| `horn`                 | Horn sound                 | 81 00 03 02 01 A0 01     |
-| `power <0-4>`          | Set power level            | 81 00 04 30 00 A0 <n>    |
-| `poweron`              | Power on bike              | 81 00 03 03 00 A0 01     |
-| `poweroff`             | Power off bike             | 81 00 03 03 00 A0 00     |
-| `booston`              | Enable boost mode          | 81 00 03 03 01 A0 01     |
-| `boostoff`             | Disable boost mode         | 81 00 03 03 01 A0 00     |
-| `lights <off|on|auto>` | Set light mode             | 81 00 03 01 00 6B <n>    |
-| `quit`                 | Exit the program           | -                        |
+Once connected and authenticated, the following commands are available:
+
+### Lock / Security
+
+| Command   | Description              | BLE Packet (hex)        |
+|-----------|--------------------------|-------------------------|
+| `unlock`  | Unlock the bike          | `81 00 03 01 00 A0 01`  |
+| `lock`    | Lock the bike            | `81 00 03 01 00 A0 00`  |
+| `arm`     | Arm (enable) alarm       | `81 00 03 01 01 A0 01`  |
+| `disarm`  | Disarm (disable) alarm   | `81 00 03 01 01 A0 00`  |
+| `alarm`   | Trigger alarm sound      | `81 00 03 01 02 A0 01`  |
 
 
 ## Project Structure
