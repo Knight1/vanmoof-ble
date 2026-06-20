@@ -1,7 +1,7 @@
 # VanMoof BLE Client Dependencies
 
 # BLE communication
-bleak>=0.21.0
+bleak>=3.0.2
 
 # CBOR encoding/decoding for VanMoof protocol
 cbor2>=5.4.0
