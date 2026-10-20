@@ -18,15 +18,15 @@ these bikes:
     from the static image; and the charger's 8-entry fault table lives in flash
     off the decompiled slice (``CHG_FAULT_TABLE`` 0x80b0), so its codes aren't
     recoverable either.
-  - The S6 reports Diagnostic Trouble Codes (DTCs) — 16-bit hex codes in the
-    ``0x9000``–``0x95ff`` range (e.g. ``0x9050``–``0x9053`` around battery
+  - The S6 reports Diagnostic Trouble Codes (DTCs) - 16-bit hex codes in the
+    ``0x9000``-``0x95ff`` range (e.g. ``0x9050``-``0x9053`` around battery
     charging). Its firmware decodes each DTC to a ``<device> <name>`` string
     through a large internal table that has not been recovered.
 
-The older numbered scheme (motor 1–8, BMS 9–20, …) belongs to the S3/X3
+The older numbered scheme (motor 1-8, BMS 9-20, ...) belongs to the S3/X3
 generation, not these bikes, so it is deliberately not reproduced here: showing
 an S3 description for an S5/A5/S6 error number would be misleading. This module
-therefore reports errors faithfully — the bare number, or the DTC in hex — the
+therefore reports errors faithfully - the bare number, or the DTC in hex - the
 way the bike and the app present them.
 
 Functions:

@@ -366,7 +366,7 @@ class VanMoofClient:
             print("   Not connected")
             return False
         if not self.authenticated:
-            print("   ❌ Not authenticated")
+            print("   Not authenticated")
             return False
         return True
 
@@ -453,7 +453,7 @@ class VanMoofClient:
             value = await self.s6_get(topic)
         wanted = s6.describe_value(topic, fields)
         if value is not None and s6.first_field(value) == fields[0]:
-            print(f"   ✅ {name}: {wanted}")
+            print(f"   [OK] {name}: {wanted}")
             return True
         if value is not None:
             got = s6.describe_value(topic, value)
@@ -571,7 +571,7 @@ class VanMoofClient:
         reply = await self.write_topic(set_topic, value, label, confirm=value_topic)
         wanted = proto.describe_topic_value(value_topic, value)
         if reply is not None and reply.value == value:
-            print(f"   ✅ {name}: {wanted}")
+            print(f"   [OK] {name}: {wanted}")
             return True
         if reply is not None:
             got = proto.describe_topic_value(value_topic, reply.value)

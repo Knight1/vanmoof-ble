@@ -29,10 +29,10 @@ async def set_lights(client, mode: str):
     values = s6.LIGHT_MODE_VALUES if client.bike_model == "S6" else proto.LIGHT_MODE_VALUES
     value = values.get(mode)
     if value is None:
-        print("   ❌ Light mode must be: off, on, or auto")
+        print("   Light mode must be: off, on, or auto")
         return
     mode_names = {"off": "Off", "on": "Always On", "auto": "Auto"}
-    print(f"\n💡 Setting lights to {mode_names[mode]}...")
+    print(f"\nSetting lights to {mode_names[mode]}...")
     if client.bike_model == "S6":
         await client.s6_apply_setting("Light mode", s6.Topic.LIGHT_MODE,
                                       [value, s6.LIGHT_OFF_AUTO_MODE])

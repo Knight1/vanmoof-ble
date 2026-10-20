@@ -144,7 +144,7 @@ class CommandTests(BikeTestCase):
                 await self.run_command(cmd)
                 self.assertEqual(self.bike.state[topic], expected)
                 self.assertEqual(self.client.topics[topic], expected)
-        self.assertEqual(self.output.getvalue().count("✅"), len(cases))
+        self.assertEqual(self.output.getvalue().count("[OK]"), len(cases))
         self.assert_clean()
 
     async def test_setting_already_applied(self):
@@ -262,7 +262,7 @@ class CommandTests(BikeTestCase):
 
     async def test_usage_errors_send_nothing(self):
         before = len(self.bike.messages)
-        for cmd in ("power", "power x", "power 9", "power ²", "error ²",
+        for cmd in ("power", "power x", "power 9", "power \u00b2", "error \u00b2",
                     "lights halo", "region mars",
                     "bellsound nope", "bellsound", "query", "query nope", "write",
                     "write zz 1", "write 0x10000 1", "subscribe nope",

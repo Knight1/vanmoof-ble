@@ -27,7 +27,7 @@ async def unlock(client):
     """Unlock the bike (S5/A5: 0x00A0 ux/lock/unlock = 1, S6: wake)"""
     if not client.require_auth():
         return
-    print("\n🔓 Unlocking...")
+    print("\nUnlocking...")
     if client.bike_model == "S6":
         # The app unlocks the S6 by waking it; the bike then publishes its
         # lock state.

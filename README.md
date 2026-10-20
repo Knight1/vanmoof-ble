@@ -154,34 +154,34 @@ Query targets (S5/A5): `lock`, `power`, `alarm`, `lights`, `level`, `region`, `b
 
 ```
 vanmoof-ble/
-├── main.py                    # Main BLE client application
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-├── commands/                  # BLE command modules
-│   ├── alarm.py               # Alarm enable/disable
-│   ├── info.py                # Status queries, device info, GATT services
-│   ├── lights.py              # Light mode control
-│   ├── lock.py                # Unlock
-│   ├── power.py               # Assist level control
-│   ├── region.py              # Speed region control (EU/US/JP/offroad)
-│   ├── sound.py               # Bell tone selection
-│   └── telemetry.py           # Telemetry and module status
-├── utils/                     # Utility modules
-│   ├── credentials_utils.py   # Certificate parsing & key validation
-│   ├── error_codes.py         # Faithful error / DTC formatting
-│   ├── protocol_codes.py      # S5/A5 topic protocol: framing, topics, values
-│   └── s6_protocol.py         # S6 message protocol: framing, topics, values
-├── tests/                     # unittest suite + seeded fuzzers (tests/test_fuzz.py)
-└── docs/
-    ├── BLEUUID.md             # BLE services and characteristics
-    └── PROTOCOL.md            # Complete BLE protocol reference
+|-- main.py                    # Main BLE client application
+|-- requirements.txt           # Python dependencies
+|-- README.md                  # This file
+|-- commands/                  # BLE command modules
+|   |-- alarm.py               # Alarm enable/disable
+|   |-- info.py                # Status queries, device info, GATT services
+|   |-- lights.py              # Light mode control
+|   |-- lock.py                # Unlock
+|   |-- power.py               # Assist level control
+|   |-- region.py              # Speed region control (EU/US/JP/offroad)
+|   |-- sound.py               # Bell tone selection
+|   +-- telemetry.py           # Telemetry and module status
+|-- utils/                     # Utility modules
+|   |-- credentials_utils.py   # Certificate parsing & key validation
+|   |-- error_codes.py         # Faithful error / DTC formatting
+|   |-- protocol_codes.py      # S5/A5 topic protocol: framing, topics, values
+|   +-- s6_protocol.py         # S6 message protocol: framing, topics, values
+|-- tests/                     # unittest suite + seeded fuzzers (tests/test_fuzz.py)
++-- docs/
+    |-- BLEUUID.md             # BLE services and characteristics
+    +-- PROTOCOL.md            # Complete BLE protocol reference
 ```
 
 ## Protocol Overview
 
 For the full protocol specification, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-The VanMoof S5/A5 speaks a small publish/subscribe protocol over a single GATT characteristic (`e3d80001-3416-4a54-b011-68d41fdcbfcf`). Each 16-bit topic id maps to a topic on the bike's internal MQTT bus. The S6 uses a related message format on its own characteristic (`df286101-…`); see [docs/PROTOCOL.md](docs/PROTOCOL.md). The S5/A5 flow:
+The VanMoof S5/A5 speaks a small publish/subscribe protocol over a single GATT characteristic (`e3d80001-3416-4a54-b011-68d41fdcbfcf`). Each 16-bit topic id maps to a topic on the bike's internal MQTT bus. The S6 uses a related message format on its own characteristic (`df286101-...`); see [docs/PROTOCOL.md](docs/PROTOCOL.md). The S5/A5 flow:
 
 1. **Certificate** - Client sends its CA-signed certificate (64-byte signature + CBOR payload)
 2. **Challenge-Response** - Bike sends a 16-byte nonce, client signs it with its Ed25519 key
@@ -231,4 +231,4 @@ frida -U -f nl.samsonit.vanmoofapp -l frida/ble_sniffer.js
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request ❤️
+Contributions are welcome! Please feel free to submit a Pull Request

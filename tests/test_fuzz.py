@@ -53,7 +53,7 @@ def random_bytes(rng, max_len=64):
 
 
 def random_text(rng, max_len=12):
-    alphabet = "abcxyz_019 /-.?é²٣🚲\t"
+    alphabet = "abcxyz_019 /-.?\u00e9\u00b2\u0663\U0001f6b2\t"
     return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, max_len)))
 
 
@@ -394,7 +394,7 @@ ARGUMENTS = ["0", "1", "2", "3", "4", "5", "9", "-1", "0x6b", "0x006b", "107",
              "eu", "us", "jp", "offroad", "de", "ping", "vanmoof", "ding_dong",
              "ship_horn", "all", "status", "telemetry", "modules", "lock",
              "power", "level", "lights", "region", "boost", "battery", "nope",
-             "²", "٣", "0x", "🚲", "8100040100181826", "81 00 04", "zz", "1e3",
+             "\u00b2", "\u0663", "0x", "\U0001f6b2", "8100040100181826", "81 00 04", "zz", "1e3",
              "1_0", "0b101", "0o17"]
 
 

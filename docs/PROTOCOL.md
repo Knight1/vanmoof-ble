@@ -2,7 +2,7 @@
 
 The S5, A5 and S6 all authenticate the same way (an Ed25519 certificate and a
 signed challenge) and carry CBOR values over one GATT characteristic, but they
-frame those values differently. Sections 1–12 cover the S5/A5; section 13
+frame those values differently. Sections 1-12 cover the S5/A5; section 13
 covers the S6; the error codes and notes after it are shared.
 
 ---
@@ -34,7 +34,7 @@ one GATT characteristic. Behind the BLE chip, the bike's `spi-mqtt-bridge`
 maps every 16-bit **topic id** to a topic on the bike's internal MQTT bus.
 Writing a topic publishes on that bus; subscribing asks the bridge to forward
 topics back as notifications. The S6 uses a related but distinct message
-format on its own characteristic — see [S6 Protocol](#s6-protocol). This
+format on its own characteristic - see [S6 Protocol](#s6-protocol). This
 document's first half covers the S5/A5.
 
 ### Key Properties
@@ -85,8 +85,8 @@ UUID (or the name) rather than pinning a MAC.
 
 ## Message and Fragment Format
 
-Every logical message is `[PayloadType:1] [body…]`, split into fragments of at
-most `MTU − 3` payload bytes:
+Every logical message is `[PayloadType:1] [body...]`, split into fragments of at
+most `MTU - 3` payload bytes:
 
 ```
 [ (0x80 if first else 0x00) | 0x01 ] [ remaining : 2 bytes BIG-endian ] [ chunk ]
@@ -95,9 +95,9 @@ most `MTU − 3` payload bytes:
 - The low seven bits of the first byte are always `1`; the app never
   increments them. So a first fragment starts with `0x81`, a continuation
   with `0x01`.
-- First fragment: `remaining` = message length − 1 (the body bytes after the
+- First fragment: `remaining` = message length - 1 (the body bytes after the
   PayloadType).
-- Fragment *n* (n ≥ 1): `remaining` = message length − n × (MTU − 3).
+- Fragment *n* (n >= 1): `remaining` = message length - n x (MTU - 3).
 - A message is complete once `remaining + 1` bytes have been reassembled.
 
 ### PayloadType
@@ -105,23 +105,23 @@ most `MTU − 3` payload bytes:
 | Type             | Value | Direction      | Body                                              |
 |------------------|-------|----------------|---------------------------------------------------|
 | `TOPIC_CBOR`     | 1     | both           | `topic:2BE` + CBOR value                          |
-| `SUBSCRIBE`      | 2     | client → bike  | `0xE001` (subscribe) / `0xE002` (unsubscribe) + `topic:2BE` list |
-| `AUTH_CERT`      | 3     | client → bike  | certificate (64-byte CA signature + CBOR)         |
+| `SUBSCRIBE`      | 2     | client -> bike  | `0xE001` (subscribe) / `0xE002` (unsubscribe) + `topic:2BE` list |
+| `AUTH_CERT`      | 3     | client -> bike  | certificate (64-byte CA signature + CBOR)         |
 | `AUTH_CHALLENGE` | 4     | both           | bike: 16-byte nonce / client: 64-byte signature   |
-| `AUTH_DETAILS`   | 5     | bike → client  | CBOR `{enc, auth}`                                |
-| `MTU_UPDATE`     | 6     | bike → client  | CBOR `{tx_max_len, tx_max_time, rx_max_len, rx_max_time}` |
-| `PARAM_UPDATE`   | 7     | bike → client  | CBOR `{latency, timeout, interval}`               |
+| `AUTH_DETAILS`   | 5     | bike -> client  | CBOR `{enc, auth}`                                |
+| `MTU_UPDATE`     | 6     | bike -> client  | CBOR `{tx_max_len, tx_max_time, rx_max_len, rx_max_time}` |
+| `PARAM_UPDATE`   | 7     | bike -> client  | CBOR `{latency, timeout, interval}`               |
 
 Example: battery level notification (single fragment):
 
 ```
 81 00 04 01 00 18 18 26
-│  └──┘ │  └──┘ └──┘
-│   │   │   │    └── CBOR 0x1826 → 38
-│   │   │   └── topic 0x0018 → power/battery/primary/info/soc_app
-│   │   └── PayloadType 1 (TOPIC_CBOR)
-│   └── remaining = 4 (message length 5 − 1)
-└── first fragment
+|  +--+ |  +--+ +--+
+|   |   |   |    +-- CBOR 0x1826 -> 38
+|   |   |   +-- topic 0x0018 -> power/battery/primary/info/soc_app
+|   |   +-- PayloadType 1 (TOPIC_CBOR)
+|   +-- remaining = 4 (message length 5 - 1)
++-- first fragment
 ```
 
 ---
@@ -160,8 +160,8 @@ AUTH_DETAILS; it sends its certificate as soon as notifications are on.
 
 ```
 TX: 81 00 A9 03 [64-byte CA signature] [CBOR payload]
-       └──┘ └── PayloadType 3 (AUTH_CERT)
-         └── remaining = certificate length (here 169 bytes)
+       +--+ +-- PayloadType 3 (AUTH_CERT)
+         +-- remaining = certificate length (here 169 bytes)
 ```
 
 With a small MTU the certificate is split over several fragments like any
@@ -185,7 +185,7 @@ TX: 81 00 40 04 [64-byte Ed25519 signature]
 
 ```
 RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
-                                                  └── auth: true
+                                                  +-- auth: true
 ```
 
 ### Rejection
@@ -209,10 +209,10 @@ authentication also causes a disconnect.
 The certificate is a binary blob structured as:
 
 ```
-┌────────────────────────────────────┐
-│ Bytes 0-63:   CA Signature         │  Ed25519 signature from the CA
-│ Bytes 64+:    CBOR Payload         │  Certificate metadata
-└────────────────────────────────────┘
++------------------------------------+
+| Bytes 0-63:   CA Signature         |  Ed25519 signature from the CA
+| Bytes 64+:    CBOR Payload         |  Certificate metadata
++------------------------------------+
 ```
 
 ### CBOR Payload Fields
@@ -270,10 +270,10 @@ A7                          # map(7)
 There are no read commands. To read a value, subscribe to its topic:
 
 ```
-02  E0 01  <topic:2BE> <topic:2BE> …
-│   │      └── one entry per topic
-│   └── control topic 0xE001 (bridge/subscribe); 0xE002 unsubscribes
-└── PayloadType 2 (SUBSCRIBE)
+02  E0 01  <topic:2BE> <topic:2BE> ...
+|   |      +-- one entry per topic
+|   +-- control topic 0xE001 (bridge/subscribe); 0xE002 unsubscribes
++-- PayloadType 2 (SUBSCRIBE)
 ```
 
 State and setting topics are **retained** on the bike, so their current
@@ -293,15 +293,15 @@ proxy topics.
 ## Topics
 
 Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
-`…/set` topic (write). "Owner" is what an owner certificate may do.
+`.../set` topic (write). "Owner" is what an owner certificate may do.
 
 | ID       | MQTT topic                              | Owner | Value                                     |
 |----------|-----------------------------------------|-------|-------------------------------------------|
 | `0x0001` | `power/state`                           | R     | power state, see below                    |
-| `0x0002` | `power/state/set`                       | –     |                                           |
+| `0x0002` | `power/state/set`                       | -     |                                           |
 | `0x0010` | `power/battery/primary/info/soc`        | R     | raw state of charge, %                    |
 | `0x0018` | `power/battery/primary/info/soc_app`    | R     | state of charge shown in the app, %       |
-| `0x0030`–`0x003E` | `device/<module>/status`       | R     | module status, see [below](#module-status-can-heartbeats) |
+| `0x0030`-`0x003E` | `device/<module>/status`       | R     | module status, see [below](#module-status-can-heartbeats) |
 | `0x0049` | `ride/info/calories`                    | R     | float                                     |
 | `0x0050` | `ride/info/speed`                       | R     | int                                       |
 | `0x0051` | `ride/info/distance`                    | R     | trip distance                             |
@@ -310,10 +310,10 @@ Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
 | `0x0054` | `ride/info/torque`                      | R     |                                           |
 | `0x0055` | `ride/info/motor_speed`                 | R     |                                           |
 | `0x0056` | `ride/info/motor_current`               | R     |                                           |
-| `0x0057` | `ride/brake_level`                      | R     | 0–255                                     |
+| `0x0057` | `ride/brake_level`                      | R     | 0-255                                     |
 | `0x0060` | `ride/boost`                            | R     |                                           |
 | `0x0061` / `0x0062` | `settings/region` (`/set`)   | R/W   | 0 EU (25 km/h), 1 US (32 km/h), 2 JP (24 km/h), 3 offroad |
-| `0x0065` / `0x0067` | `settings/assist_level` (`/set`) | R/W | 0 off, 1–4 (`0x0066` is unused)        |
+| `0x0065` / `0x0067` | `settings/assist_level` (`/set`) | R/W | 0 off, 1-4 (`0x0066` is unused)        |
 | `0x0068` / `0x0069` | `settings/shift_levels` (`/set`) | R/W |                                        |
 | `0x006A` / `0x006B` | `settings/light_mode` (`/set`) | R/W | 1 on, 2 off, 3 auto                      |
 | `0x006E` / `0x006F` | `settings/alarm` (`/set`)    | R/W   | bool (alarm enabled)                      |
@@ -321,9 +321,9 @@ Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
 | `0x0074` / `0x0075` | `settings/backup_unlock_code` (`/set`) | R/W | 3-symbol backup code              |
 | `0x007B` / `0x007C` | `settings/brake_lights` (`/set`) | R/W |                                        |
 | `0x007D` / `0x007E` | `settings/turning_lights` (`/set`) | R/W |                                      |
-| `0x0076` | `ux/sound/play`                         | –     |                                           |
-| `0x0078` | `ux/alarm/state`                        | –     | 1 alarm stage 2, 2 alarm stage 3, 3 theft |
-| `0x0081`–`0x0084` | `ux/sensor/{light,humidity,temperature,air}` | R |                           |
+| `0x0076` | `ux/sound/play`                         | -     |                                           |
+| `0x0078` | `ux/alarm/state`                        | -     | 1 alarm stage 2, 2 alarm stage 3, 3 theft |
+| `0x0081`-`0x0084` | `ux/sensor/{light,humidity,temperature,air}` | R |                           |
 | `0x00A0` | `ux/lock/unlock`                        | W     | write `1` to unlock                       |
 | `0x00A1` | `ux/lock/info/state`                    | R     | 1 locked, 3 unlocked (or unlocking), 5 unlocked |
 | `0x00A5` | `ux/info/distance`                      | R     | odometer (community clients divide by 100 for km; unverified) |
@@ -331,12 +331,12 @@ Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
 | `0x00C0` | `ble/system/version_info`               | R     | BLE firmware version string               |
 | `0x00E1` | `ble/findmy/report`                     | R     | bytes                                     |
 | `0x00FF` | (errors)                                | R     | subscribed by the app; not in the 1.5.0 registry |
-| `0xE001` / `0xE002` | `bridge/subscribe` / `unsubscribe` | – | SUBSCRIBE control topics               |
+| `0xE001` / `0xE002` | `bridge/subscribe` / `unsubscribe` | - | SUBSCRIBE control topics               |
 
 **Power state** (`0x0001`): 0 invalid, 1 shipping, 2 standby, 3 operational,
 4 charging, 5 updating, 6 alarm, 7 maintenance.
 
-> ⚠️ Corrections to the community clients: topic `0x0001` is the power state,
+> Note: corrections to the community clients: topic `0x0001` is the power state,
 > not the lock state (the real lock state is `0x00A1`); topic `0x0010` is the
 > raw state of charge, not a "module battery"; topic `0x0061` is the region,
 > not the gear. Light modes are `1` on, `2` off, `3` auto (taken from the
@@ -348,7 +348,7 @@ Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
 
 ## Writing Settings
 
-Write the CBOR value to the `…/set` topic as a TOPIC_CBOR message. The
+Write the CBOR value to the `.../set` topic as a TOPIC_CBOR message. The
 owning service validates it, applies it and re-publishes the value topic,
 which arrives as a notification if you are subscribed to it:
 
@@ -361,7 +361,7 @@ RX: 81 00 03 01 00 6A 02      settings/light_mode = 2
 |-----------------|---------------------------|
 | Unlock          | `81 00 03 01 00 A0 01`    |
 | Alarm on / off  | `81 00 03 01 00 6F F5` / `81 00 03 01 00 6F F4` |
-| Lights on / off / auto | `81 00 03 01 00 6B 01` / `… 02` / `… 03` |
+| Lights on / off / auto | `81 00 03 01 00 6B 01` / `... 02` / `... 03` |
 | Assist level N  | `81 00 03 01 00 67 0N`    |
 | Region N        | `81 00 03 01 00 62 0N`    |
 | Bell tone N     | `81 00 03 01 00 73 0N`    |
@@ -392,7 +392,7 @@ heartbeat view available over BLE:
 | `0x0037` | imx8_bridge        |          |                    |
 
 ```
-02 E0 01 00 30 00 31 … 00 3E      subscribe to all module statuses
+02 E0 01 00 30 00 31 ... 00 3E      subscribe to all module statuses
 ```
 
 Use the `modules` command to read them.
@@ -415,7 +415,7 @@ application-layer encryption, and topic values are always plain CBOR.
 **PARAM_UPDATE** (PayloadType 7) reports the connection parameters, e.g.
 `{"latency": 0, "timeout": 25, "interval": 12}`. **MTU_UPDATE** (PayloadType
 6) reports the data length parameters (`tx_max_len`, `tx_max_time`,
-`rx_max_len`, `rx_max_time`), or `{"err": …}`.
+`rx_max_len`, `rx_max_time`), or `{"err": ...}`.
 
 ---
 
@@ -440,7 +440,7 @@ them worked and most didn't:
 | Assist level, region  | `81 00 04 30 0x A0 xx`    | invalid PayloadType `0x30`, one byte short     |
 | Read commands         | `81 00 02 ..`             | empty publishes / invalid PayloadTypes         |
 
-The old status-field tables (`spd`, `bat`, `cad`, …) and the AES
+The old status-field tables (`spd`, `bat`, `cad`, ...) and the AES
 "encryption handshake" do not exist on the S5/A5.
 
 ---
@@ -488,7 +488,7 @@ push values unasked; this tool reads each topic with a GET.
 
 ### Fragment format
 
-Fragments are different from the message's own fields — `remaining` is
+Fragments are different from the message's own fields - `remaining` is
 **big-endian**:
 
 ```
@@ -517,7 +517,7 @@ A negative status is a rejection; a bad signature also drops the connection.
 ### Payload wrapping
 
 A request payload wraps its CBOR in a byte string inside a one-element array
-(`81 <bstr>`), as the app's kotlinx-serialization does — there is no map and
+(`81 <bstr>`), as the app's kotlinx-serialization does - there is no map and
 no "value" key. The certificate and signature are wrapped once more:
 
 ```
@@ -550,7 +550,7 @@ captures ("captured") or the app's S6 code.
 | `0x01B1` | firmware        | R   | firmware version                              |
 | `0x022A` | battery_level   | R   | % (captured)                                  |
 | `0x022D` | charge_limit    | R/W | % charge limit, e.g. 80/85/90/95/100 (captured) |
-| `0xFF00` | auth            | —   | certificate / challenge exchange              |
+| `0xFF00` | auth            | -   | certificate / challenge exchange              |
 
 > There is no BLE lock command: the S6 is locked on its kicklock. Unlock is a
 > wake (`0x010C`); the bike then publishes `lock_state` = 0. SET `0x0142` rings
@@ -582,7 +582,7 @@ the worded descriptions riders see come from VanMoof's support material.
   reproduced here.
 
 A value of `0` means no error. `format_error` in `utils/error_codes.py` renders
-whatever the bike reports — the bare number, or the DTC in hex. Use the
+whatever the bike reports - the bare number, or the DTC in hex. Use the
 `error <code>` REPL command to format one (`error 0x9050`).
 
 ## Troubleshooting

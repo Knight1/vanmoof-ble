@@ -25,11 +25,11 @@ async def set_power_level(client, level: int):
     if not client.require_auth():
         return
     if level < 0 or level > 4:
-        print("   ❌ Power level must be 0-4")
+        print("   Power level must be 0-4")
         return
 
     level_names = ["Off", "Level 1", "Level 2", "Level 3", "Level 4"]
-    print(f"\n⚡ Setting power level to {level_names[level]}...")
+    print(f"\nSetting power level to {level_names[level]}...")
     if client.bike_model == "S6":
         await client.s6_apply_setting("Assist level", s6.Topic.ASSIST_LEVEL, [level])
         return

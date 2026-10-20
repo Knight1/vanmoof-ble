@@ -148,7 +148,7 @@ class CommandTests(S6TestCase):
             with self.subTest(cmd=cmd):
                 await self.run_command(cmd)
                 self.assertEqual(self.bike.state[topic], expected)
-        self.assertEqual(self.output.getvalue().count("✅"), len(cases))
+        self.assertEqual(self.output.getvalue().count("[OK]"), len(cases))
         self.assert_clean()
 
     async def test_setting_confirmed_by_get(self):
@@ -157,7 +157,7 @@ class CommandTests(S6TestCase):
         self.bike.publish_on_set = False
         await self.run_command("power 3")
         self.assertEqual(self.bike.state[Topic.ASSIST_LEVEL], [3])
-        self.assertIn("✅ Assist level: 3", self.output.getvalue())
+        self.assertIn("[OK] Assist level: 3", self.output.getvalue())
 
     async def test_unlock(self):
         await self.run_command("unlock")

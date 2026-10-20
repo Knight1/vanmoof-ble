@@ -43,9 +43,9 @@ async def set_bell_sound(client, tone: str = None):
     values = s6.BELL_SOUND_VALUES if is_s6 else proto.BELL_SOUND_VALUES
     value = values.get(tone.lower())
     if value is None:
-        print(f"   ❌ Unknown tone. Valid: {', '.join(values)}")
+        print(f"   Unknown tone. Valid: {', '.join(values)}")
         return
-    print(f"\n🔔 Setting bell sound to {tone}...")
+    print(f"\nSetting bell sound to {tone}...")
     if is_s6:
         await client.s6_apply_setting("Bell sound", s6.Topic.BELL_SOUND, [value])
         return
