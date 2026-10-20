@@ -200,6 +200,32 @@ class ValueTests(unittest.TestCase):
             with self.subTest(topic=topic, value=value):
                 self.assertEqual(s6.describe_value(topic, value), expected)
 
+    def test_dtc_detection(self):
+        self.assertTrue(s6.is_dtc(0x9053))   # class 0x90
+        self.assertTrue(s6.is_dtc(0xA4FF))   # class 0xA4 battery
+        self.assertTrue(s6.is_dtc(0xC100))   # class 0xC1 elock
+        for not_dtc in (0, 22, 0x0016, 0x0100, 0xB000, True, "0x9053", None, 1.0):
+            self.assertFalse(s6.is_dtc(not_dtc))
+
+    def test_dtc_describe(self):
+        self.assertEqual(
+            s6.describe_dtc(0x9053),
+            "power/battery supervisor DTC 0x9053: "
+            "low-battery shutdown (RSOC < 11% or VBAT < 3401 mV)")
+        self.assertEqual(s6.describe_dtc(0x9050),
+                         "power/battery supervisor DTC 0x9050: "
+                         "lipo RSOC (fuel-gauge state-of-charge) read failed")
+        self.assertEqual(s6.describe_dtc(0xA4FF), "battery DTC 0xA4FF")
+        self.assertEqual(s6.describe_dtc(0xC100), "elock DTC 0xC100")
+        self.assertIsNone(s6.describe_dtc(0x1234))
+        self.assertIsNone(s6.describe_dtc(22))
+
+    def test_dtc_on_errors_topic(self):
+        self.assertEqual(s6.describe_value(Topic.ERRORS, [0x9052]),
+                         "power/battery supervisor DTC 0x9052: "
+                         "lipo VBAT (pack voltage) read failed")
+        self.assertEqual(s6.describe_value(Topic.ERRORS, [0xA701]), "charger DTC 0xA701")
+
     def test_topic_names(self):
         self.assertEqual(s6.topic_name(Topic.LOCK_STATE), "lock_state")
         self.assertEqual(s6.topic_name(0x1234), "topic_0x1234")

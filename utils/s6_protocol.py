@@ -133,6 +133,69 @@ BELL_SOUND_VALUES = {name: value for value, name in BELL_SOUNDS.items()}
 LIGHT_OFF_AUTO_MODE = 1
 
 
+# --------------------------------------------------------------------------- #
+# Diagnostic Trouble Codes (DTCs)
+# --------------------------------------------------------------------------- #
+#
+# The ble ECU keeps a set of DTCs (``dtc_set`` @0x2ce30): a 16-bit code with an
+# occurrence counter and a "raised" flag, set edge-triggered when a fault
+# becomes active and cleared when it resolves. A DTC's high byte is the device
+# class and its low byte a per-device subcode:
+#
+#     DTC = (device_class << 8) | subcode
+#
+# The device-class map below is the switch in the firmware's ``dtc`` shell dump
+# (``ble`` @0x2c314), which renders each active code as "<device> <name>"; it
+# matches the bike's CAN node ids. The per-subcode name strings live in a large
+# table that has not been recovered, so a general DTC is reported by its device
+# and hex code. A few fixed DTCs whose exact trigger is readable from their
+# set/clear sites are named in KNOWN_DTCS.
+DTC_DEVICE_CLASSES = {
+    0x08: "ble",
+    0x8D: "BMS",
+    0x90: "power/battery supervisor",
+    0xA1: "motor_sensor",
+    0xA2: "power_control",
+    0xA3: "charger (timeouts)",
+    0xA4: "battery",
+    0xA7: "charger",
+    0xC0: "handlebar",
+    0xC1: "elock",
+    0xC3: "rear carrier",
+    0xC4: "frontlight",
+}
+
+# DTCs whose trigger condition is recoverable from the firmware set/clear sites
+# (power_state_smf.c battery supervisor, modem_dtc.c). Class 0x90 = the ble
+# ECU's power/battery supervisor.
+KNOWN_DTCS = {
+    0x9000: "DTC clear command malformed (payload < 16 bytes or pattern mismatch)",
+    0x9050: "lipo RSOC (fuel-gauge state-of-charge) read failed",
+    0x9052: "lipo VBAT (pack voltage) read failed",
+    0x9053: "low-battery shutdown (RSOC < 11% or VBAT < 3401 mV)",
+}
+
+
+def is_dtc(code: Any) -> bool:
+    """True if `code` is a 16-bit value whose high byte is a known device class."""
+    if not isinstance(code, int) or isinstance(code, bool):
+        return False
+    return 0 <= code <= 0xFFFF and (code >> 8) in DTC_DEVICE_CLASSES
+
+
+def describe_dtc(code: Any) -> Optional[str]:
+    """
+    Describe a DTC by device and code, naming the trigger when it is known;
+    None if `code` isn't a recognised DTC.
+    """
+    if not is_dtc(code):
+        return None
+    device = DTC_DEVICE_CLASSES[code >> 8]
+    known = KNOWN_DTCS.get(code)
+    tail = ": {0}".format(known) if known else ""
+    return "{0} DTC 0x{1:04X}{2}".format(device, code, tail)
+
+
 def _int(value: Any) -> Optional[int]:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -156,6 +219,8 @@ def describe_value(topic: int, value: Any) -> str:
     }
     if topic in tables and _int(field) is not None and field in tables[topic]:
         return tables[topic][field]
+    if topic == Topic.ERRORS and describe_dtc(field) is not None:
+        return describe_dtc(field)
     if topic in (Topic.BATTERY_LEVEL, Topic.CHARGE_LIMIT) and _int(field) is not None:
         return "{0}%".format(field)
     if topic == Topic.ASSIST_LEVEL and field == 0 and _int(field) is not None:
@@ -430,6 +495,16 @@ def _selftest() -> None:
     assert [c.next() for _ in range(129)][-2:] == [127, 1]
     c = message_counter()
     assert [c.next() for _ in range(257)][-2:] == [255, 0]
+
+    # DTCs: device class from the high byte, named trigger for the fixed ones.
+    assert is_dtc(0x9053) and is_dtc(0xA4FF) and is_dtc(0xC101)
+    assert not is_dtc(0x0016) and not is_dtc(22) and not is_dtc(True) and not is_dtc("0x9053")
+    assert describe_dtc(0x9053) == ("power/battery supervisor DTC 0x9053: "
+                                    "low-battery shutdown (RSOC < 11% or VBAT < 3401 mV)")
+    assert describe_dtc(0xA4FF) == "battery DTC 0xA4FF"
+    assert describe_dtc(0x1234) is None
+    assert describe_value(Topic.ERRORS, [0x9050]) == \
+        "power/battery supervisor DTC 0x9050: lipo RSOC (fuel-gauge state-of-charge) read failed"
 
     print("s6_protocol self-test: OK")
 

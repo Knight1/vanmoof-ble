@@ -236,6 +236,17 @@ class CommandTests(S6TestCase):
         await self.run_command("read 0x011f")
         self.assertIn("ERROR: Error 22 was detected", self.output.getvalue())
 
+    async def test_errors_topic_dtc(self):
+        # A DTC on the errors topic is rendered with its device and trigger.
+        self.bike.state[Topic.ERRORS] = [0x9053]
+        await self.run_command("read 0x011f")
+        self.assertIn("power/battery supervisor DTC 0x9053", self.output.getvalue())
+        self.assertIn("low-battery shutdown", self.output.getvalue())
+
+    async def test_error_command_dtc(self):
+        await self.run_command("error 0xa4ff")
+        self.assertIn("battery DTC 0xA4FF", self.output.getvalue())
+
 
 class UnauthenticatedTests(S6TestCase):
 

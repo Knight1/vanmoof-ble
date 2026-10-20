@@ -572,11 +572,21 @@ the worded descriptions riders see come from VanMoof's support material.
   a UVP (under-voltage / empty-pack) fault, but the detailed battery
   status/warning bit names are runtime strings not in the static image, and the
   charger's 8-entry fault table is in off-image flash.
-- **S6** reports Diagnostic Trouble Codes (DTCs): 16-bit hex codes in the
-  `0x9000`-`0x95FF` range (e.g. `0x9050`-`0x9053` around battery charging),
-  read on topic `0x011F`. The firmware decodes each DTC to a
-  `<device> <name>` string via a large internal table that hasn't been
-  recovered.
+- **S6** reports Diagnostic Trouble Codes (DTCs), read on topic `0x011F`. A
+  DTC is a 16-bit code whose **high byte is the device class** and low byte a
+  per-device subcode (`DTC = (class << 8) | subcode`); the firmware sets one
+  edge-triggered when a fault becomes active (`dtc_set` @0x2ce30) and clears it
+  when it resolves. The device-class map is the switch in the firmware's `dtc`
+  dump (@0x2c314) and matches the bike's CAN node ids: `0x08` ble, `0x8D` BMS,
+  `0x90` power/battery supervisor, `0xA1` motor_sensor, `0xA2` power_control,
+  `0xA3` charger (timeouts), `0xA4` battery, `0xA7` charger, `0xC0` handlebar,
+  `0xC1` elock, `0xC3` rear carrier, `0xC4` frontlight. The per-subcode name
+  strings are a large table that hasn't been recovered, so a DTC is reported by
+  device + hex code. A few whose exact trigger is readable from their set/clear
+  sites are named: `0x9050` lipo RSOC (fuel-gauge) read failed, `0x9052` lipo
+  VBAT read failed, `0x9053` low-battery shutdown (RSOC < 11% or VBAT <
+  3401 mV), `0x9000` malformed DTC-clear command. `utils/s6_protocol.py`
+  (`describe_dtc`) renders these.
 - The old numbered scheme (motor 1-8, BMS 9-20, SIM 54-58, ...) is the
   **S3/X3** generation's and does **not** apply to these bikes, so it isn't
   reproduced here.

@@ -216,7 +216,7 @@ class VanMoofClient:
         error = s6.first_field(value)
         if (msg.topic == s6.Topic.ERRORS and isinstance(error, int)
                 and not isinstance(error, bool) and error != 0):
-            print(f"   ERROR: {format_error(error)}")
+            print(f"   ERROR: {s6.describe_dtc(error) or format_error(error)}")
 
     def _show(self, msg: proto.S5Message):
         """Print a decoded message and record what it tells us."""
@@ -915,9 +915,9 @@ async def handle_command(cmd: str, client: VanMoofClient):
             except ValueError:
                 code = None
         if code is None:
-            print("Usage: error <code>  (e.g. error 22 or error 0x9050)")
+            print("Usage: error <code>  (e.g. error 22 or error 0x9053)")
         else:
-            print(f"   {format_error(code)}")
+            print(f"   {s6.describe_dtc(code) or format_error(code)}")
     elif command == "help":
         print_help()
     elif command in ("q", "quit", "exit"):
