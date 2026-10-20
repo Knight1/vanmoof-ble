@@ -1,35 +1,64 @@
-# VanMoof S5/A5 BLE Protocol Reference
+# VanMoof S5/A5/S6 BLE Protocol Reference
+
+The S5, A5 and S6 all authenticate the same way (an Ed25519 certificate and a
+signed challenge) and carry CBOR values over one GATT characteristic, but they
+frame those values differently. Sections 1–12 cover the S5/A5; section 13
+covers the S6; the error codes and notes after it are shared.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [BLE Service Information](#ble-service-information)
-3. [Packet Structure](#packet-structure)
+2. [Transport](#transport)
+3. [Message and Fragment Format](#message-and-fragment-format)
 4. [Authentication](#authentication)
 5. [Certificate Format](#certificate-format)
-6. [Command Reference](#command-reference)
-7. [Read Commands (Queries)](#read-commands-queries)
-8. [Status Messages](#status-messages)
-9. [Encryption (Optional)](#encryption-optional)
-10. [Response Parsing](#response-parsing)
-11. [Troubleshooting](#troubleshooting)
-12. [Security Notes](#security-notes)
+6. [Subscribing (Reading)](#subscribing-reading)
+7. [Topics](#topics)
+8. [Writing Settings](#writing-settings)
+9. [Module Status (CAN Heartbeats)](#module-status-can-heartbeats)
+10. [Status Messages](#status-messages)
+11. [Legacy `81 00 ..` Command Tables](#legacy-81-00--command-tables)
+12. [S6 Protocol](#s6-protocol)
+13. [Error Codes](#error-codes)
+14. [Troubleshooting](#troubleshooting)
+15. [Security Notes](#security-notes)
 
 ---
 
 ## Overview
 
-The VanMoof S5 and A5 e-bikes use Bluetooth Low Energy (BLE) for communication. All commands and responses flow through a single custom GATT characteristic using a binary protocol with CBOR-encoded status payloads.
+The VanMoof S5 and A5 speak a small MQTT-like publish/subscribe protocol over
+one GATT characteristic. Behind the BLE chip, the bike's `spi-mqtt-bridge`
+maps every 16-bit **topic id** to a topic on the bike's internal MQTT bus.
+Writing a topic publishes on that bus; subscribing asks the bridge to forward
+topics back as notifications. The S6 uses a related but distinct message
+format on its own characteristic — see [S6 Protocol](#s6-protocol). This
+document's first half covers the S5/A5.
 
 ### Key Properties
 
-- **Authentication**: Ed25519 digital signatures with certificate-based trust
-- **Certificates**: Issued by a Certificate Authority, containing CBOR-encoded metadata
-- **Challenge-Response**: Bike sends a 16-byte nonce, client signs it with Ed25519 private key
-- **Protocol**: Binary frames with CBOR for structured data
-- **Encryption**: Optional AES-128-CBC encrypted sessions (used in some firmware versions)
+- **Authentication**: Ed25519 challenge-response with a CA-signed certificate
+- **Messages**: `[PayloadType][body]`, fragmented to the BLE MTU
+- **Values**: CBOR (integers, booleans, strings, maps)
+- **Permissions**: the certificate's role decides which topics may be read or
+  written (enforced by the bike's MQTT ACL)
+- **Encryption**: none at the application layer; the `enc` flag the bike
+  reports is BLE link-layer encryption
+
+### Sources
+
+Ground truth, in order of authority:
+
+1. **Bike firmware v1.5.0**: the `spi-mqtt-bridge` topic-id registry (300
+   entries), the nRF52 `ble` image (authentication, AUTH_DETAILS) and the
+   mosquitto ACL per certificate role.
+2. **Official app** (`nl.samsonit.vanmoofapp` 24.3): the S5/A5 topic table,
+   value encoders and fragmenter.
+
+Implemented in `utils/protocol_codes.py`; run `python -m utils.protocol_codes`
+for its self-test.
 
 ### Required Credentials
 
@@ -38,78 +67,62 @@ The VanMoof S5 and A5 e-bikes use Bluetooth Low Energy (BLE) for communication. 
 
 ---
 
-## BLE Service Information
+## Transport
 
-| Property             | Value                                        |
-|----------------------|----------------------------------------------|
-| Service UUID         | `e3d80000-3416-4a54-b011-68d41fdcbfcf`       |
-| Characteristic UUID  | `e3d80001-3416-4a54-b011-68d41fdcbfcf`       |
-| Properties           | Write, Notify                                |
+| Role                        | UUID                                         |
+|-----------------------------|----------------------------------------------|
+| Service                     | `e3d80000-3416-4a54-b011-68d41fdcbfcf`       |
+| App (notify + write)        | `e3d80001-3416-4a54-b011-68d41fdcbfcf`       |
 
-All communication happens through this single characteristic. The client writes commands and receives responses via notifications.
+The official app enables notifications on `e3d80001` and writes everything to
+it. Some community clients write to `e3d80002` when the bike exposes it; the
+app never does.
+
+The bike's BLE address is randomised on every reboot: scan for the service
+UUID (or the name) rather than pinning a MAC.
 
 ---
 
-## Packet Structure
+## Message and Fragment Format
 
-### Frame Format
-
-Every packet starts with a 2-byte header followed by a type/length byte and a subtype byte:
+Every logical message is `[PayloadType:1] [body…]`, split into fragments of at
+most `MTU − 3` payload bytes:
 
 ```
-Byte 0: Frame byte (direction indicator)
-Byte 1: Reserved (always 0x00)
-Byte 2: Module/Length (context-dependent)
-Byte 3: Command/Subtype
-Byte 4+: Payload
+[ (0x80 if first else 0x00) | 0x01 ] [ remaining : 2 bytes BIG-endian ] [ chunk ]
 ```
 
-### Frame Bytes (Byte 0)
+- The low seven bits of the first byte are always `1`; the app never
+  increments them. So a first fragment starts with `0x81`, a continuation
+  with `0x01`.
+- First fragment: `remaining` = message length − 1 (the body bytes after the
+  PayloadType).
+- Fragment *n* (n ≥ 1): `remaining` = message length − n × (MTU − 3).
+- A message is complete once `remaining + 1` bytes have been reassembled.
 
-| Value  | Direction       | Description                              |
-|--------|-----------------|------------------------------------------|
-| `0x80` | Bike -> Client  | Standard bike response                   |
-| `0x81` | Client -> Bike  | Standard client command                  |
-| `0x82` | Bike -> Client  | Alternate response (some firmware)       |
+### PayloadType
 
-The client must match the frame byte used by the bike. During authentication, echo the exact frame byte received in the init message.
+| Type             | Value | Direction      | Body                                              |
+|------------------|-------|----------------|---------------------------------------------------|
+| `TOPIC_CBOR`     | 1     | both           | `topic:2BE` + CBOR value                          |
+| `SUBSCRIBE`      | 2     | client → bike  | `0xE001` (subscribe) / `0xE002` (unsubscribe) + `topic:2BE` list |
+| `AUTH_CERT`      | 3     | client → bike  | certificate (64-byte CA signature + CBOR)         |
+| `AUTH_CHALLENGE` | 4     | both           | bike: 16-byte nonce / client: 64-byte signature   |
+| `AUTH_DETAILS`   | 5     | bike → client  | CBOR `{enc, auth}`                                |
+| `MTU_UPDATE`     | 6     | bike → client  | CBOR `{tx_max_len, tx_max_time, rx_max_len, rx_max_time}` |
+| `PARAM_UPDATE`   | 7     | bike → client  | CBOR `{latency, timeout, interval}`               |
 
-### Byte 2: Module vs Length
+Example: battery level notification (single fragment):
 
-Byte 2 serves different purposes depending on the message type:
-
-**For commands (write/read/config):**
-
-| Value  | Module     | Purpose                        |
-|--------|------------|--------------------------------|
-| `0x02` | Read       | Query current value            |
-| `0x03` | Write      | Set a value                    |
-| `0x04` | Configure  | Set persistent configuration   |
-
-**For protocol messages (auth, status):**
-
-Byte 2 is the payload length (number of bytes after byte 3):
-
-| Example          | Byte 2 | Meaning                       |
-|------------------|--------|-------------------------------|
-| Challenge        | `0x10` | 16 bytes of challenge data    |
-| Challenge resp.  | `0x40` | 64 bytes of signature         |
-| Certificate      | varies | Certificate data length       |
-| Status           | varies | CBOR payload length           |
-
-### Message Types (Byte 2 + Byte 3 combinations)
-
-| Byte 2 | Byte 3 | Direction     | Description                    |
-|--------|--------|---------------|--------------------------------|
-| `0x0D` | `0x05` | Both          | Status message (CBOR)          |
-| `0x10` | `0x04` | Bike->Client  | Authentication challenge       |
-| `0x40` | `0x04` | Client->Bike  | Challenge response (signature) |
-| length | `0x03` | Client->Bike  | Certificate submission         |
-| `0x02` | varies | Client->Bike  | Read command (query)           |
-| `0x03` | varies | Client->Bike  | Write command (set value)      |
-| `0x04` | varies | Client->Bike  | Configuration command          |
-| `0x07` | `0x01` | Bike->Client  | Command response               |
-| `0x1F` | `0x07` | Bike->Client  | Connection parameters          |
+```
+81 00 04 01 00 18 18 26
+│  └──┘ │  └──┘ └──┘
+│   │   │   │    └── CBOR 0x1826 → 38
+│   │   │   └── topic 0x0018 → power/battery/primary/info/soc_app
+│   │   └── PayloadType 1 (TOPIC_CBOR)
+│   └── remaining = 4 (message length 5 − 1)
+└── first fragment
+```
 
 ---
 
@@ -120,118 +133,72 @@ Byte 2 is the payload length (number of bytes after byte 3):
 ```
 Client                                          Bike
   |                                               |
-  |            1. Connect (BLE GATT)              |
+  |   1. Connect, enable notifications (e3d80001) |
   |<--------------------------------------------->|
   |                                               |
-  |         2. Init {enc: false, auth: false}      |
+  |   2. AUTH_DETAILS {enc: false, auth: false}   |
   |<----------------------------------------------|
   |                                               |
-  |         3. Echo init back                      |
+  |   3. AUTH_CERT [CA_sig + CBOR]                |
   |---------------------------------------------->|
   |                                               |
-  |         4. Certificate [CA_sig + CBOR]         |
-  |---------------------------------------------->|
-  |                                               |
-  |         5. Challenge (16-byte nonce)           |
+  |   4. AUTH_CHALLENGE (16-byte nonce)           |
   |<----------------------------------------------|
   |                                               |
-  |         6. Signed challenge (64-byte sig)      |
+  |   5. AUTH_CHALLENGE (64-byte Ed25519 sig)     |
   |---------------------------------------------->|
   |                                               |
-  |         7. Confirm {enc: false, auth: true}    |
+  |   6. AUTH_DETAILS {enc: false, auth: true}    |
   |<----------------------------------------------|
 ```
 
-### Step 1: Connect and Subscribe
+The bike also sends PARAM_UPDATE / MTU_UPDATE messages whenever the link
+parameters change. The official app does **not** echo the initial
+AUTH_DETAILS; it sends its certificate as soon as notifications are on.
 
-```python
-from bleak import BleakClient
-
-CHAR_UUID = "e3d80001-3416-4a54-b011-68d41fdcbfcf"
-
-client = BleakClient(mac_address)
-await client.connect()
-await client.start_notify(CHAR_UUID, notification_handler)
-```
-
-### Step 2: Receive and Echo Init
-
-The bike sends an init status message:
+### Certificate
 
 ```
-RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
-                      └── CBOR: {"enc": false, "auth": false}
+TX: 81 00 A9 03 [64-byte CA signature] [CBOR payload]
+       └──┘ └── PayloadType 3 (AUTH_CERT)
+         └── remaining = certificate length (here 169 bytes)
 ```
 
-Echo it back exactly (preserve the frame byte):
+With a small MTU the certificate is split over several fragments like any
+other message.
+
+### Challenge
 
 ```
-TX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
+RX: 81 00 10 04 [16-byte nonce]
 ```
 
-### Step 3: Send Certificate
+### Response
 
-Build the certificate packet with the full certificate (CA signature + CBOR payload):
-
-```
-TX: [frame_byte] 00 [cert_length] 03 [64-byte CA signature] [CBOR payload]
-```
-
-- `cert_length`: Length of the certificate data (CA signature + CBOR)
-- `0x03`: Certificate subtype identifier
-- The CA signature is the original signature from the certificate, not recomputed
-
-```python
-def build_auth_packet(ca_signature, cert_cbor, first_byte=0x81):
-    cert_data = ca_signature + cert_cbor
-    packet = bytearray([first_byte, 0x00, len(cert_data), 0x03])
-    packet.extend(cert_data)
-    return bytes(packet)
-```
-
-### Step 4: Receive Challenge
-
-The bike sends a 16-byte random challenge nonce:
+Sign exactly the 16 nonce bytes with the Ed25519 private key:
 
 ```
-RX: 81 00 10 04 [16 random bytes]
-         |  |    └── Challenge nonce
-         |  └── Subtype 0x04 (challenge)
-         └── Length 0x10 (16 bytes)
+TX: 81 00 40 04 [64-byte Ed25519 signature]
 ```
 
-### Step 5: Sign and Send Response
-
-Sign the 16-byte challenge with the Ed25519 private key to produce a 64-byte signature:
-
-```python
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-def build_challenge_response(private_key, challenge, first_byte=0x81):
-    signature = private_key.sign(challenge)  # 64-byte Ed25519 signature
-    packet = bytearray([first_byte, 0x00, 0x40, 0x04])
-    packet.extend(signature)
-    return bytes(packet)
-```
-
-```
-TX: [frame_byte] 00 40 04 [64-byte Ed25519 signature]
-                  |  |
-                  |  └── Subtype 0x04 (challenge response)
-                  └── Length 0x40 (64 bytes)
-```
-
-### Step 6: Receive Confirmation
-
-The bike confirms successful authentication:
+### Confirmation
 
 ```
 RX: 81 00 0D 05 BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
-                                                   |
-                                            F5 = true (authenticated!)
+                                                  └── auth: true
 ```
 
-CBOR decoded: `{"enc": false, "auth": true}`
+### Rejection
+
+The bike doesn't answer a bad certificate or signature with `{auth: false}`; it
+logs a reason and drops the connection. Reasons from the firmware:
+`invalid certificate/parsing error`, `server signature invalid`,
+`bike id invalid`, `certificate expired`, `certificate blacklisted`,
+`challenge return invalid`, `authentication timeout`.
+
+An AUTH_CERT body of 64 bytes or less is rejected as `server signature
+invalid` **even on an authenticated connection**, and any topic write before
+authentication also causes a disconnect.
 
 ---
 
@@ -264,10 +231,17 @@ The CBOR payload is a map with 7 fields:
 
 ### Role Values
 
-| Value | Role   | Permissions                              |
-|-------|--------|------------------------------------------|
-| 7     | Owner  | Full control of all bike functions       |
-| 3     | User   | Limited access (ride, basic controls)    |
+The role becomes the bike's MQTT user `ble-role-N`, and the bike's ACL decides
+what that user may read and write.
+
+| Value | Role          | Permissions                                       |
+|-------|---------------|---------------------------------------------------|
+| 7     | Owner         | Read/write `settings/#`, unlock, read ride / battery / power state / lock state / module status / errors |
+| 11    | Shared bike   | Like Owner, but only selected settings            |
+| 17    | Bike doctor   | Full read/write                                   |
+| 22    | Bike hunter   | Full read/write                                   |
+| 55    | QA engineer   | Full read/write                                   |
+| 66    | R&D engineer  | Full read/write                                   |
 
 ### Example CBOR (Annotated Hex)
 
@@ -291,410 +265,360 @@ A7                          # map(7)
 
 ---
 
-## Command Reference
+## Subscribing (Reading)
 
-### Command Packet Format
-
-Write commands (module `0x03`):
+There are no read commands. To read a value, subscribe to its topic:
 
 ```
-[frame_byte] 00 03 [group] [sub] [param] [value]
+02  E0 01  <topic:2BE> <topic:2BE> …
+│   │      └── one entry per topic
+│   └── control topic 0xE001 (bridge/subscribe); 0xE002 unsubscribes
+└── PayloadType 2 (SUBSCRIBE)
 ```
 
-Configuration commands (module `0x04`):
+State and setting topics are **retained** on the bike, so their current
+values arrive immediately; afterwards every change is pushed. Telemetry
+topics only arrive when they change. Topics the certificate's role may not
+read are silently ignored. Subscribing twice to the same topic doesn't
+re-send its value.
 
-```
-[frame_byte] 00 04 [group] [sub] [param] [value]
-```
-
-### Command Groups
-
-| Group  | Hex    | Description                              |
-|--------|--------|------------------------------------------|
-| Security | `0x01` | Lock, alarm, lights, sounds            |
-| Sound    | `0x02` | Bell, horn                             |
-| Ride     | `0x03` | Power on/off, boost                    |
-| Config   | `0x30` | Assist level, speed region             |
-
-### Sub-commands
-
-| Group  | Sub    | Target                                   |
-|--------|--------|------------------------------------------|
-| `0x01` | `0x00` | Lock/Unlock                              |
-| `0x01` | `0x01` | Alarm arm/disarm                         |
-| `0x01` | `0x02` | Alarm trigger                            |
-| `0x02` | `0x00` | Bell                                     |
-| `0x02` | `0x01` | Horn                                     |
-| `0x03` | `0x00` | Power on/off                             |
-| `0x03` | `0x01` | Boost on/off                             |
-| `0x30` | `0x00` | Assist level                             |
-| `0x30` | `0x01` | Speed region                             |
-
-### Parameter Types
-
-| Param  | Hex    | Purpose                                  |
-|--------|--------|------------------------------------------|
-| State  | `0xA0` | On/off toggle, level values              |
-| Light  | `0x6B` | Light mode control                       |
-| Sound  | `0x21` | Sound ID selection                       |
-
-### Lock / Unlock
-
-| Command         | Packet (hex)            | Description              |
-|-----------------|-------------------------|--------------------------|
-| Unlock          | `81 00 03 01 00 A0 01`  | Unlock the bike          |
-| Lock            | `81 00 03 01 00 A0 00`  | Lock the bike            |
-
-### Alarm
-
-| Command           | Packet (hex)            | Description            |
-|-------------------|-------------------------|------------------------|
-| Arm alarm         | `81 00 03 01 01 A0 01`  | Enable alarm           |
-| Disarm alarm      | `81 00 03 01 01 A0 00`  | Disable alarm          |
-| Trigger alarm     | `81 00 03 01 02 A0 01`  | Trigger alarm sound    |
-
-### Sound / Bell
-
-| Command           | Packet (hex)            | Description            |
-|-------------------|-------------------------|------------------------|
-| Bell (single)     | `81 00 03 02 00 A0 01`  | Single bell ding       |
-| Bell (double)     | `81 00 03 02 00 A0 02`  | Double bell ding       |
-| Horn              | `81 00 03 02 01 A0 01`  | Horn sound             |
-| Play sound        | `81 00 03 01 00 21 XX`  | Play sound by ID       |
-
-### Lights
-
-| Command           | Packet (hex)            | Description            |
-|-------------------|-------------------------|------------------------|
-| Lights off        | `81 00 03 01 00 6B 00`  | Turn lights off        |
-| Lights on         | `81 00 03 01 00 6B 01`  | Always on              |
-| Lights auto       | `81 00 03 01 00 6B 03`  | Automatic / sensor     |
-
-Light mode values:
-
-| Value | Mode                                            |
-|-------|-------------------------------------------------|
-| `0x00` | Off                                            |
-| `0x01` | Always on                                      |
-| `0x03` | Auto (sensor-triggered)                        |
-
-### Ride Control
-
-| Command           | Packet (hex)            | Description            |
-|-------------------|-------------------------|------------------------|
-| Power on          | `81 00 03 03 00 A0 01`  | Power on electronics   |
-| Power off         | `81 00 03 03 00 A0 00`  | Power off electronics  |
-| Enable boost      | `81 00 03 03 01 A0 01`  | Enable boost mode      |
-| Disable boost     | `81 00 03 03 01 A0 00`  | Disable boost mode     |
-
-### Power Assist Level
-
-Uses configuration module `0x04`:
-
-| Level   | Packet (hex)            | Description            |
-|---------|-------------------------|------------------------|
-| Off     | `81 00 04 30 00 A0 00`  | No motor assist        |
-| Level 1 | `81 00 04 30 00 A0 01`  | Lowest assist          |
-| Level 2 | `81 00 04 30 00 A0 02`  | Medium-low assist      |
-| Level 3 | `81 00 04 30 00 A0 03`  | Medium-high assist     |
-| Level 4 | `81 00 04 30 00 A0 04`  | Maximum assist         |
-
-Note: Changing the power level requires the bike to be unlocked and powered on.
-
-### Speed Region
-
-Uses configuration module `0x04`, config group `0x30`, subcommand `0x01`:
-
-| Region  | Packet (hex)            | Max Speed              |
-|---------|-------------------------|------------------------|
-| EU      | `81 00 04 30 01 A0 00`  | 25 km/h                |
-| US      | `81 00 04 30 01 A0 01`  | 32 km/h                |
-| JP      | `81 00 04 30 01 A0 02`  | 24 km/h                |
+After login the official app subscribes to: power state, battery, lock state,
+touch-unlock request, backup code, speed, assist level, light mode, bell
+sound, alarm, shift levels, region, brake/turning lights, ride animation,
+odometer, Find My, BLE firmware version, errors, calories and its update /
+proxy topics.
 
 ---
 
-## Read Commands (Queries)
+## Topics
 
-Read commands use module `0x02` to query the current value of any settable parameter. They follow the same group/sub/param structure as write commands but without a value byte:
+Topic ids are 2 bytes, big-endian. A setting has a value topic (read) and a
+`…/set` topic (write). "Owner" is what an owner certificate may do.
+
+| ID       | MQTT topic                              | Owner | Value                                     |
+|----------|-----------------------------------------|-------|-------------------------------------------|
+| `0x0001` | `power/state`                           | R     | power state, see below                    |
+| `0x0002` | `power/state/set`                       | –     |                                           |
+| `0x0010` | `power/battery/primary/info/soc`        | R     | raw state of charge, %                    |
+| `0x0018` | `power/battery/primary/info/soc_app`    | R     | state of charge shown in the app, %       |
+| `0x0030`–`0x003E` | `device/<module>/status`       | R     | module status, see [below](#module-status-can-heartbeats) |
+| `0x0049` | `ride/info/calories`                    | R     | float                                     |
+| `0x0050` | `ride/info/speed`                       | R     | int                                       |
+| `0x0051` | `ride/info/distance`                    | R     | trip distance                             |
+| `0x0052` | `ride/info/pedal_rpm`                   | R     |                                           |
+| `0x0053` | `ride/info/motor_temperature`           | R     |                                           |
+| `0x0054` | `ride/info/torque`                      | R     |                                           |
+| `0x0055` | `ride/info/motor_speed`                 | R     |                                           |
+| `0x0056` | `ride/info/motor_current`               | R     |                                           |
+| `0x0057` | `ride/brake_level`                      | R     | 0–255                                     |
+| `0x0060` | `ride/boost`                            | R     |                                           |
+| `0x0061` / `0x0062` | `settings/region` (`/set`)   | R/W   | 0 EU (25 km/h), 1 US (32 km/h), 2 JP (24 km/h), 3 offroad |
+| `0x0065` / `0x0067` | `settings/assist_level` (`/set`) | R/W | 0 off, 1–4 (`0x0066` is unused)        |
+| `0x0068` / `0x0069` | `settings/shift_levels` (`/set`) | R/W |                                        |
+| `0x006A` / `0x006B` | `settings/light_mode` (`/set`) | R/W | 1 on, 2 off, 3 auto                      |
+| `0x006E` / `0x006F` | `settings/alarm` (`/set`)    | R/W   | bool (alarm enabled)                      |
+| `0x0072` / `0x0073` | `settings/bell_sound` (`/set`) | R/W | 0 ding_dong, 1 party_horn, 2 ping, 3 vanmoof, 4 ship_horn |
+| `0x0074` / `0x0075` | `settings/backup_unlock_code` (`/set`) | R/W | 3-symbol backup code              |
+| `0x007B` / `0x007C` | `settings/brake_lights` (`/set`) | R/W |                                        |
+| `0x007D` / `0x007E` | `settings/turning_lights` (`/set`) | R/W |                                      |
+| `0x0076` | `ux/sound/play`                         | –     |                                           |
+| `0x0078` | `ux/alarm/state`                        | –     | 1 alarm stage 2, 2 alarm stage 3, 3 theft |
+| `0x0081`–`0x0084` | `ux/sensor/{light,humidity,temperature,air}` | R |                           |
+| `0x00A0` | `ux/lock/unlock`                        | W     | write `1` to unlock                       |
+| `0x00A1` | `ux/lock/info/state`                    | R     | 1 locked, 3 unlocked (or unlocking), 5 unlocked |
+| `0x00A5` | `ux/info/distance`                      | R     | odometer (community clients divide by 100 for km; unverified) |
+| `0x00A8` / `0x00A9` | `eshifter/gear` (`/set`)     | R/W   |                                           |
+| `0x00C0` | `ble/system/version_info`               | R     | BLE firmware version string               |
+| `0x00E1` | `ble/findmy/report`                     | R     | bytes                                     |
+| `0x00FF` | (errors)                                | R     | subscribed by the app; not in the 1.5.0 registry |
+| `0xE001` / `0xE002` | `bridge/subscribe` / `unsubscribe` | – | SUBSCRIBE control topics               |
+
+**Power state** (`0x0001`): 0 invalid, 1 shipping, 2 standby, 3 operational,
+4 charging, 5 updating, 6 alarm, 7 maintenance.
+
+> ⚠️ Corrections to the community clients: topic `0x0001` is the power state,
+> not the lock state (the real lock state is `0x00A1`); topic `0x0010` is the
+> raw state of charge, not a "module battery"; topic `0x0061` is the region,
+> not the gear. Light modes are `1` on, `2` off, `3` auto (taken from the
+> app's encoder), not `0` off / `2` halo. Bell tones on the wire are not the
+> app's `BellSound` enum ordinals, and the app's tring, laser, quack, meow
+> and epic tones aren't supported on S5/A5.
+
+---
+
+## Writing Settings
+
+Write the CBOR value to the `…/set` topic as a TOPIC_CBOR message. The
+owning service validates it, applies it and re-publishes the value topic,
+which arrives as a notification if you are subscribed to it:
 
 ```
-[frame_byte] 00 02 [group] [sub] [param]
+TX: 81 00 03 01 00 6B 02      settings/light_mode/set = 2 (off)
+RX: 81 00 03 01 00 6A 02      settings/light_mode = 2
 ```
 
-The bike responds via a command response message (`07 01`) or a CBOR status update (`0D 05`).
+| Action          | Packet (hex)              |
+|-----------------|---------------------------|
+| Unlock          | `81 00 03 01 00 A0 01`    |
+| Alarm on / off  | `81 00 03 01 00 6F F5` / `81 00 03 01 00 6F F4` |
+| Lights on / off / auto | `81 00 03 01 00 6B 01` / `… 02` / `… 03` |
+| Assist level N  | `81 00 03 01 00 67 0N`    |
+| Region N        | `81 00 03 01 00 62 0N`    |
+| Bell tone N     | `81 00 03 01 00 73 0N`    |
 
-### Available Read Commands
+The official app never writes `0` to `ux/lock/unlock`: the S5/A5 has no BLE
+lock command. An owner certificate can't change the power state, toggle
+boost, or play a sound (`power/state/set`, `ride/boost`, `ux/sound/play`); the
+bike ignores those writes.
 
-| Query            | Packet (hex)       | Description               |
-|------------------|--------------------|---------------------------|
-| Lock state       | `81 00 02 01 00 A0` | Is the bike locked?      |
-| Alarm state      | `81 00 02 01 01 A0` | Is the alarm armed?      |
-| Light mode       | `81 00 02 01 00 6B` | Current light setting    |
-| Power state      | `81 00 02 03 00 A0` | Is the bike powered on?  |
-| Boost state      | `81 00 02 03 01 A0` | Is boost enabled?        |
-| Assist level     | `81 00 02 30 00 A0` | Current assist level     |
-| Speed region     | `81 00 02 30 01 A0` | Current speed region     |
+---
 
-### Response Format
+## Module Status (CAN Heartbeats)
 
-Command responses arrive as notifications with bytes 2-3 = `07 01`:
+The bike's `monitor` service tracks every sub-module through its CANopen
+heartbeat (every 2 s) and publishes the result as `device/<module>/status`.
+These topics are readable with an owner certificate, which makes the CAN-bus
+heartbeat view available over BLE:
+
+| ID       | Module             | ID       | Module             |
+|----------|--------------------|----------|--------------------|
+| `0x0030` | ble                | `0x0038` | modem              |
+| `0x0031` | battery_primary    | `0x0039` | motor_control      |
+| `0x0032` | battery_secondary  | `0x003A` | motor_sensor       |
+| `0x0033` | charger            | `0x003B` | power_control      |
+| `0x0034` | elock              | `0x003C` | power_pedal        |
+| `0x0035` | eshifter           | `0x003D` | rearlight          |
+| `0x0036` | frontlight         | `0x003E` | user_ecu           |
+| `0x0037` | imx8_bridge        |          |                    |
 
 ```
-RX: 80 00 07 01 [group] [sub] [param] [value...]
+02 E0 01 00 30 00 31 … 00 3E      subscribe to all module statuses
 ```
+
+Use the `modules` command to read them.
 
 ---
 
 ## Status Messages
 
-The bike sends CBOR-encoded status messages automatically during authentication and after state changes. These use message type `0x0D 0x05`.
-
-### Format
-
-```
-[frame_byte] 00 [length] 05 [CBOR data]
-```
-
-The CBOR data uses an indefinite-length map (starts with `0xBF`, ends with `0xFF`).
-
-### Known Status / Telemetry Fields
-
-The bike streams CBOR telemetry data via notifications when powered on. The set of fields varies by model and firmware version. All known fields:
-
-**Connection State:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `enc`       | bool    | Encryption enabled                       |
-| `auth`      | bool    | Authentication status                    |
-| `enabled`   | bool    | Bike electronics powered on              |
-| `ready`     | bool    | Bike ready for commands                  |
-
-**Bike State:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `locked`    | bool    | Lock state                               |
-| `alarm`     | bool    | Alarm armed                              |
-| `boost`     | bool    | Boost mode active                        |
-| `boost_btn` | bool    | Boost button currently pressed           |
-| `pwr`       | int     | Assist level (0-4)                       |
-| `light`     | int     | Light mode (0=off, 1=on, 3=auto)         |
-| `gear`      | int     | Current gear                             |
-| `region`    | int     | Speed region setting                     |
-| `err`       | int     | Error code (0 = no error)                |
-
-**Motion Sensors:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `spd`       | float   | Current speed (km/h)                     |
-| `cad`       | int     | Pedal cadence / RPM                      |
-| `torque`    | float   | Pedal torque (Nm)                        |
-
-**Battery & Power:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `bat`       | int     | Battery level (percentage)               |
-| `charging`  | bool    | Battery currently charging               |
-
-**Temperature Sensors:**
-
-| Key           | Type  | Description                              |
-|---------------|-------|------------------------------------------|
-| `motor_temp`  | int   | Motor temperature (C)                    |
-| `driver_temp` | int   | Motor driver/controller temperature (C)  |
-| `module_temp` | int   | Main module temperature (C)              |
-| `temp`        | int   | General temperature (C)                  |
-
-**Environment Sensors:**
-
-| Key           | Type  | Description                              |
-|---------------|-------|------------------------------------------|
-| `light`       | int   | Ambient light sensor value               |
-| `humidity`    | int   | Humidity (%)                             |
-| `air_quality` | int   | Air quality index (S6)                   |
-
-**Distance:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `dst`       | float   | Trip distance (km)                       |
-| `odo`       | float   | Odometer total (km)                      |
-
-**Device Info:**
-
-| Key         | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `fw`        | string  | Firmware version                         |
-| `hw`        | string  | Hardware revision                        |
-
-### Init Status Example
+**AUTH_DETAILS** (PayloadType 5) is sent when the connection is set up, when
+the link becomes encrypted and after authentication:
 
 ```
-BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF
-   └─ "enc"  └─false └─ "auth"  └─false └─ end map
+BF 63 65 6E 63 F4 64 61 75 74 68 F4 FF      {"enc": false, "auth": false}
+BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF      {"enc": false, "auth": true}
 ```
 
-Decoded: `{"enc": false, "auth": false}`
+`enc` means the BLE link is encrypted (security level 2 or 3); there is no
+application-layer encryption, and topic values are always plain CBOR.
 
-### Authenticated Status Example
-
-```
-BF 63 65 6E 63 F4 64 61 75 74 68 F5 FF
-```
-
-Decoded: `{"enc": false, "auth": true}`
+**PARAM_UPDATE** (PayloadType 7) reports the connection parameters, e.g.
+`{"latency": 0, "timeout": 25, "interval": 12}`. **MTU_UPDATE** (PayloadType
+6) reports the data length parameters (`tx_max_len`, `tx_max_time`,
+`rx_max_len`, `rx_max_time`), or `{"err": …}`.
 
 ---
 
-## Encryption (Optional)
+## Legacy `81 00 ..` Command Tables
 
-Some firmware versions support (or require) an AES-128-CBC encrypted session after authentication. When encryption is active, the init status shows `{"enc": true, "auth": false}`.
+Earlier versions of this tool and document described an
+`[frame byte][0x00][module][group][sub][param][value]` command model. Those
+bytes are really the fragment header plus a PayloadType, which is why some of
+them worked and most didn't:
 
-### Encryption Handshake
+| Old command           | Packet (hex)              | What the bike actually received                |
+|-----------------------|---------------------------|------------------------------------------------|
+| Unlock                | `81 00 03 01 00 A0 01`    | `ux/lock/unlock = 1`: correct                  |
+| Lock                  | `81 00 03 01 00 A0 00`    | `ux/lock/unlock = 0`: never sent by the app    |
+| Arm / disarm alarm    | `81 00 03 01 01 A0 0x`    | topic `0x01A0`, which doesn't exist            |
+| Trigger alarm         | `81 00 03 01 02 A0 01`    | topic `0x02A0`, which doesn't exist            |
+| Lights on / auto      | `81 00 03 01 00 6B 01/03` | `settings/light_mode/set`: correct             |
+| Lights off            | `81 00 03 01 00 6B 00`    | invalid light mode (off is `02`)               |
+| Play sound            | `81 00 03 01 00 21 xx`    | `power/battery/lipo/info/voltage` (denied)     |
+| Bell / horn           | `81 00 03 02 0x A0 0x`    | malformed SUBSCRIBE                            |
+| Power on/off, boost   | `81 00 03 03 0x A0 0x`    | 3-byte AUTH_CERT: the bike disconnects         |
+| Assist level, region  | `81 00 04 30 0x A0 xx`    | invalid PayloadType `0x30`, one byte short     |
+| Read commands         | `81 00 02 ..`             | empty publishes / invalid PayloadTypes         |
 
-After successful authentication:
-
-#### Step 1: Client Sends Encryption Init
-
-```
-TX: A0 [16-byte random nonce]
-```
-
-The client generates a random 16-byte nonce and sends it with the `0xA0` prefix.
-
-#### Step 2: Bike Responds with Nonce
-
-```
-RX: A1 [16-byte bike nonce]
-```
-
-The bike responds with its own 16-byte nonce prefixed with `0xA1`.
-
-#### Step 3: Derive Encryption IVs
-
-IVs are derived asymmetrically from the bike's nonce:
-
-```python
-# TX IV (Client -> Bike): bitwise NOT of bike nonce
-iv_encrypt = bytes(b ^ 0xFF for b in bike_nonce)
-
-# RX IV (Bike -> Client): bike nonce as-is
-iv_decrypt = bike_nonce
-```
-
-### Encrypted Frame Format
-
-After the handshake, all subsequent frames are encrypted:
-
-```
-Plaintext:  [length] [0x01] [payload bytes] [zero-pad to 16-byte boundary]
-Ciphertext: AES-128-CBC(plaintext, key, iv)
-```
-
-### IV Chaining
-
-After each encryption/decryption operation, the IV is updated to the last 16 bytes of the ciphertext:
-
-```python
-iv_encrypt = ciphertext[-16:]  # After encrypting
-iv_decrypt = ciphertext[-16:]  # After decrypting
-```
-
-### Encryption Parameters
-
-| Parameter   | Value                                        |
-|-------------|----------------------------------------------|
-| Cipher      | AES-128                                      |
-| Mode        | CBC                                          |
-| Key Size    | 16 bytes (128 bits)                          |
-| IV Size     | 16 bytes (128 bits)                          |
-| Padding     | Zero-pad to 16-byte boundary                 |
-| IV Update   | Chained (last 16 bytes of previous ciphertext) |
+The old status-field tables (`spd`, `bat`, `cad`, …) and the AES
+"encryption handshake" do not exist on the S5/A5.
 
 ---
 
-## Response Parsing
+## S6 Protocol
 
-### Command Responses
+The S6 uses a single characteristic like the S5/A5, but its own message
+format. Implemented in `utils/s6_protocol.py`; run `python -m utils.s6_protocol`
+for its self-test.
 
-After sending a write or read command, the bike responds with a command response message:
+Sources, in order of authority: field captures of the official app talking to 
+the official app 24.3 (S6 profile `xl/l0`, builder `mm.o`, fragmenter `cg.r.c`,
+CRC `ck.a`), and the S6 `ble` firmware v1.8.8.4974.
+
+### Transport
+
+| Role                        | UUID                                         |
+|-----------------------------|----------------------------------------------|
+| Service                     | `df286100-1440-48a1-88f1-247d7f7d274d`       |
+| App (notify + write)        | `df286101-1440-48a1-88f1-247d7f7d274d`       |
+
+The app enables notifications on `df286101` and writes everything to it. Some
+retail bikes advertise the same service with a different 128-bit base
+(`df286100-6003-11e5-9260-0002a5d5c51b`); this tool matches the `df286101`
+prefix either way.
+
+### Message format
+
+Each message is:
 
 ```
-RX: 80 00 07 01 [group] [sub] [param] [value...]
-              |  |
-              |  └── Mirrors the command's group/sub/param
-              └── Subtype 0x01 (command response)
+[id:1][flags:1][topic:2 LE][length:2 LE][payload][crc:2 LE]
 ```
 
-### CBOR Status Updates
+- `id` is a per-connection counter (0..255, wrapping).
+- `flags` = `type | (qos << 3) | (retain << 4)`. Types: 0 ACK, 1 PUBLISH,
+  2 SUBSCRIBE, 3 UNSUBSCRIBE, 4 GET, 5 SET, 6 OWN, 7 SYNC. The app's QoS is
+  `AT_MOST_ONCE` = 1, so a SET is `0x0D` and a GET is `0x0C`.
+- `topic` and `length` are **little-endian**.
+- `crc` is CRC-16/MODBUS over every byte before it, appended little-endian.
 
-After state changes, the bike also sends CBOR status updates:
+The client reads with GET (empty payload), writes with SET, and the bike
+answers with PUBLISH. Auth also uses SET. Unlike the S5/A5, the bike doesn't
+push values unasked; this tool reads each topic with a GET.
+
+### Fragment format
+
+Fragments are different from the message's own fields — `remaining` is
+**big-endian**:
 
 ```
-RX: 80 00 0D 05 BF [key-value pairs...] FF
+[(0x80 if first else 0x00) | frag_id][remaining:2 BE][chunk]
 ```
 
-Parse using any CBOR library. Look for the `0xBF` marker (indefinite-length map start) to find the CBOR data within the packet.
+`frag_id` is a second counter (0..127, then 1..127), shared by a message's
+fragments. `remaining` counts the bytes still to come including this chunk, so
+the first fragment carries the full message length. A chunk is at most one
+GATT write (ATT MTU - 3). At MTU 247 most messages are a single fragment.
 
-### Connection Parameters
+### Authentication
 
-Some firmware versions send connection parameter messages:
+Both auth messages are a SET on the AUTH topic `0xFF00`; the bike answers with
+a PUBLISH on the same topic.
 
 ```
-RX: 80 00 1F 07 [CBOR data]
+client -> bike   SET 0xFF00   certificate, wrapped (see below)
+bike -> client   PUBLISH 0xFF00   [status, challenge]  (status >= 0, 16-byte challenge)
+client -> bike   SET 0xFF00   Ed25519 signature of the challenge, wrapped
+bike -> client   PUBLISH 0xFF00   [status]             (status >= 0, no challenge = success)
 ```
 
-These contain BLE connection timing parameters and can generally be ignored.
+A negative status is a rejection; a bad signature also drops the connection.
+
+### Payload wrapping
+
+A request payload wraps its CBOR in a byte string inside a one-element array
+(`81 <bstr>`), as the app's kotlinx-serialization does — there is no map and
+no "value" key. The certificate and signature are wrapped once more:
+
+```
+certificate:  81 58AB 58A9 <169-byte certificate>
+signature:    81 5842 5840 <64-byte signature>
+```
+
+A settable value is encoded as its data-class fields in a CBOR array, then
+wrapped: `SET 0x0110 [3]` (assist level 3) is `81 42 8103`. The bike's
+PUBLISH replies wrap the same way with indefinite-length arrays.
+
+### Topics
+
+Topic ids are 2 bytes (little-endian on the wire). Verified against the field
+captures ("captured") or the app's S6 code.
+
+| ID       | Name            | R/W | Value                                         |
+|----------|-----------------|-----|-----------------------------------------------|
+| `0x0031` | frame_number    | R   | frame number string                           |
+| `0x010C` | wake            | W   | SET [1] wakes the bike, which unlocks it (captured) |
+| `0x0110` | assist_level    | R/W | 0 off, 1-4                                    |
+| `0x0112` | lock_state      | R   | 0 unlocked, 1 locked; published by the bike (captured) |
+| `0x0113` | distance        | R   | odometer                                      |
+| `0x0131` | light_mode      | R/W | `[mode, 1]`: 0 off, 2 on, 3 auto (1 is not on) |
+| `0x0142` | bell_sound      | W   | selecting a tone plays it; SET [1] rings the bell (captured) |
+| `0x0164` | speed           | R   | current speed (captured)                      |
+| `0x0171` | alarm_sensitivity | R/W | 1 high, 2 medium, 4 low                     |
+| `0x0172` | alarm           | R/W | 0 off, 1 on                                   |
+| `0x011F` | errors          | R   | error code (captured)                         |
+| `0x01B1` | firmware        | R   | firmware version                              |
+| `0x022A` | battery_level   | R   | % (captured)                                  |
+| `0x022D` | charge_limit    | R/W | % charge limit, e.g. 80/85/90/95/100 (captured) |
+| `0xFF00` | auth            | —   | certificate / challenge exchange              |
+
+> There is no BLE lock command: the S6 is locked on its kicklock. Unlock is a
+> wake (`0x010C`); the bike then publishes `lock_state` = 0. SET `0x0142` rings
+> the bell, it does **not** unlock. Light mode value 1 is not "on" (use 2).
 
 ---
+
+## Error Codes
+
+There is no public table mapping a VanMoof error number to a description for
+the S5/A5/S6. The official app shows the bare number ("Error N was detected");
+the worded descriptions riders see come from VanMoof's support material.
+
+- **S5/A5** report errors on the MQTT `error/#` subtree (per service); the
+  errors topic the app subscribes to (id `0x00FF`) carries a list. The S5
+  firmware decomp (v1.5.0) was reviewed to try to recover a numbered table and
+  does not contain one: errors surface as `service/{power,ux,monitor,update}/error`
+  (ids `0x0200`-`0x0203`, JSON/string); the battery has a generic-fault bit and
+  a UVP (under-voltage / empty-pack) fault, but the detailed battery
+  status/warning bit names are runtime strings not in the static image, and the
+  charger's 8-entry fault table is in off-image flash.
+- **S6** reports Diagnostic Trouble Codes (DTCs): 16-bit hex codes in the
+  `0x9000`-`0x95FF` range (e.g. `0x9050`-`0x9053` around battery charging),
+  read on topic `0x011F`. The firmware decodes each DTC to a
+  `<device> <name>` string via a large internal table that hasn't been
+  recovered.
+- The old numbered scheme (motor 1-8, BMS 9-20, SIM 54-58, ...) is the
+  **S3/X3** generation's and does **not** apply to these bikes, so it isn't
+  reproduced here.
+
+A value of `0` means no error. `format_error` in `utils/error_codes.py` renders
+whatever the bike reports — the bare number, or the DTC in hex. Use the
+`error <code>` REPL command to format one (`error 0x9050`).
 
 ## Troubleshooting
 
-### Bike Disconnects After Certificate
+### Bike Disconnects During Authentication
 
 | Symptom                    | Solution                                     |
 |----------------------------|----------------------------------------------|
-| Immediate disconnect       | Check that the length byte (byte 2) matches the actual certificate data size |
-| Disconnect after cert sent | Use the original CA signature from the certificate, not a recomputed one |
+| Disconnect after cert sent | Use the original certificate bytes (CA signature + CBOR) unchanged |
 | Key mismatch error         | Ensure the private key matches the public key embedded in the certificate |
 | Certificate expired        | Request a new certificate (typically valid for 7 days) |
-| Wrong frame byte           | Use the same frame byte (0x81/0x82) as the bike's init message |
+| Disconnect after signature | Sign exactly the 16-byte challenge with the certificate's key |
 
 ### No Challenge Received
 
 | Symptom                    | Solution                                     |
 |----------------------------|----------------------------------------------|
-| No response after cert     | Make sure to echo the init message back before sending the certificate |
-| Timeout waiting            | Verify the certificate packet structure: `[frame] 00 [len] 03 [cert]` |
-| Wrong response type        | Check that notifications are enabled on the characteristic |
-
-### Auth Rejected After Challenge
-
-| Symptom                    | Solution                                     |
-|----------------------------|----------------------------------------------|
-| Auth false after response  | Use the same private key that was used to generate the certificate |
-| Signature invalid          | Sign exactly the 16-byte challenge, nothing more, nothing less |
-| Wrong signature length     | Ed25519 signatures are always 64 bytes |
+| Timeout waiting            | Check that notifications are enabled on `e3d80001` before sending the certificate |
+| Large certificate          | Fragment it to the negotiated MTU (first fragment `0x81`, continuations `0x01`) |
 
 ### Commands Not Working
 
 | Symptom                    | Solution                                     |
 |----------------------------|----------------------------------------------|
-| No response to commands    | Verify authentication succeeded (`auth: true` in status) |
-| Power level won't change   | Unlock the bike and power on electronics first |
-| Lock won't respond         | Some operations need specific bike states (e.g., stationary) |
+| No confirmation after a write | Subscribe to the value topic; check that the certificate's role may write it |
+| Value doesn't change       | Check the value encoding in [Topics](#topics) (e.g. lights off is `2`) |
+| Disconnect after a command | Never send AUTH_CERT after login or any topic write before it |
 
 ---
 
 ## Security Notes
 
 - **Certificate expiry**: Certificates are typically valid for 7 days. Request new ones as needed.
-- **CA signature validation**: The bike verifies that the certificate was signed by the trusted Certificate Authority. The CA signature proves the certificate is authorized for the specific bike.
+- **CA signature validation**: The bike verifies that the certificate was signed by the trusted Certificate Authority, and that it was issued for this bike's id.
 - **Challenge-response**: The 16-byte random challenge prevents replay attacks. Each authentication session uses a unique challenge.
 - **Key binding**: The Ed25519 public key in the certificate must match the private key used to sign the challenge. This binds the authentication to the specific keypair.
-- **Role-based access**: The certificate's role field (owner=7, user=3) determines which commands are available.
+- **Role-based access**: The certificate's role selects the bike's ACL (owner=7, shared bike=11, service roles 17/22/55/66 with full access), which decides which topics may be read or written.
 
 ---

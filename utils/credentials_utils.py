@@ -11,7 +11,7 @@ The CBOR payload contains:
     f  - Frame number (string)
     b  - Bike serial (string)
     e  - Expiry timestamp (uint32, Unix epoch)
-    r  - Role (uint8, 7=owner, 3=user)
+    r  - Role (uint8, 7=owner, 11=shared bike; see protocol_codes.ROLE_NAMES)
     u  - User UUID (16 bytes)
     p  - Ed25519 public key (32 bytes)
 
@@ -20,6 +20,7 @@ Functions:
 """
 
 import base64
+import binascii
 import sys
 import datetime
 
@@ -27,6 +28,8 @@ import cbor2
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from dataclasses import dataclass
+
+from utils.protocol_codes import ROLE_NAMES
 
 
 @dataclass
@@ -56,18 +59,37 @@ def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
         Credentials dataclass with all parsed fields
 
     Raises:
-        SystemExit: If keys don't match (wrong private key for certificate)
+        SystemExit: If the key or certificate is malformed, or the keys don't
+            match (wrong private key for certificate)
     """
     # Load private key (handle both 32-byte seed and 64-byte expanded formats)
-    raw_key = base64.b64decode(privkey_b64)
-    private_key = Ed25519PrivateKey.from_private_bytes(raw_key[:32])
+    try:
+        raw_key = base64.b64decode(privkey_b64)
+        private_key = Ed25519PrivateKey.from_private_bytes(raw_key[:32])
+    except (binascii.Error, ValueError) as e:
+        sys.exit(f"Invalid private key: {e}")
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
     # Parse certificate: first 64 bytes = CA signature, rest = CBOR
-    cert_raw = base64.b64decode(cert_b64)
+    try:
+        cert_raw = base64.b64decode(cert_b64)
+        parsed = cbor2.loads(cert_raw[64:]) if len(cert_raw) > 64 else None
+    except Exception as e:  # bad base64 or any CBOR decode error
+        sys.exit(f"Invalid certificate: {e}")
+    if not isinstance(parsed, dict):
+        sys.exit("Invalid certificate: expected a 64-byte CA signature "
+                 "followed by a CBOR map")
+    for field in ("i", "e", "r"):
+        value = parsed.get(field)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            sys.exit(f"Invalid certificate: field '{field}' is not an integer")
+    try:
+        if parsed.get("e"):
+            datetime.datetime.fromtimestamp(parsed["e"], tz=datetime.timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        sys.exit("Invalid certificate: expiry is out of range")
     ca_sig = cert_raw[:64]
     cbor_only = cert_raw[64:]
-    parsed = cbor2.loads(cbor_only)
 
     creds = Credentials(
         private_key=private_key,
@@ -86,7 +108,7 @@ def load_credentials(privkey_b64: str, cert_b64: str) -> Credentials:
     print("Credentials Loaded:")
     print(f"   Cert ID: {creds.cert_id}")
     print(f"   Frame:   {creds.frame}")
-    print(f"   Role:    {creds.role} ({'Owner' if creds.role == 7 else 'User'})")
+    print(f"   Role:    {creds.role} ({ROLE_NAMES.get(creds.role, 'unknown role')})")
     if creds.expiry:
         dt = datetime.datetime.fromtimestamp(creds.expiry, tz=datetime.timezone.utc)
         print(f"   Expiry:  {dt.strftime('%Y-%m-%d %H:%M:%S UTC')}")

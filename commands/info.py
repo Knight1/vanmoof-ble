@@ -3,38 +3,40 @@ VanMoof S5/A5/S6 BLE Information & Status Commands
 
 Query bike state, read device information, and display status.
 
-Read commands use module 0x02:  81 00 02 [group] [sub] [param]
-The bike responds with the current value via a command response (07 01)
-or a CBOR status update (0D 05).
+Reading a value on the S5/A5 means subscribing to its topic: states and
+settings are retained on the bike, so the current value is delivered as soon
+as the subscription is made. The S6 is read with a GET per topic (see
+VanMoofClient.read_topics).
 
 Functions:
-    query_lock_state(client):   Query lock state
-    query_alarm_state(client):  Query alarm state
-    query_light_mode(client):   Query light mode
-    query_power_state(client):  Query power on/off state
-    query_boost_state(client):  Query boost mode state
-    query_power_level(client):  Query assist level
+    query(client, target):      Query one state (see QUERIES) or 'all'
     query_battery(client):      Query battery level
-    query_all(client):          Query all known states
     read_device_info(client):   Read GATT device information (firmware, model, etc.)
     list_services(client):      List all GATT services and characteristics
     show_bike_info(client):     Display comprehensive bike information
-    show_last_status(client):   Display last received CBOR status
+    show_last_status(client):   Display the link-level status the bike reported
 
-Command group reference:
-    | Query            | Packet (hex)      | Description           |
-    |------------------|-------------------|-----------------------|
-    | Lock state       | 81 00 02 01 00 A0 | Read lock state       |
-    | Alarm state      | 81 00 02 01 01 A0 | Read alarm state      |
-    | Light mode       | 81 00 02 01 00 6B | Read light mode       |
-    | Power state      | 81 00 02 03 00 A0 | Read power on/off     |
-    | Boost state      | 81 00 02 03 01 A0 | Read boost mode       |
-    | Assist level     | 81 00 02 30 00 A0 | Read assist level     |
-    | Region           | 81 00 02 30 01 A0 | Read speed region     |
+Query reference:
+    | Query    | Topic                                              |
+    |----------|----------------------------------------------------|
+    | lock     | 0x00A1 ux/lock/info/state                          |
+    | power    | 0x0001 power/state                                 |
+    | alarm    | 0x006E settings/alarm                              |
+    | lights   | 0x006A settings/light_mode                         |
+    | level    | 0x0065 settings/assist_level                       |
+    | region   | 0x0061 settings/region                             |
+    | boost    | 0x0060 ride/boost                                  |
+    | battery  | 0x0018 .../soc_app (app %), 0x0010 .../soc (raw %) |
+
+    On the S6: lock 0x0112, alarm 0x0172, lights 0x0131, level 0x0110,
+    battery 0x022A (see S6_QUERIES).
 """
 
-import asyncio
 import datetime
+
+from utils import protocol_codes as proto
+from utils import s6_protocol as s6
+from utils.protocol_codes import Topic
 
 
 # Standard BLE Device Information Service characteristic UUIDs
@@ -47,86 +49,73 @@ DIS_CHARS = {
     "00002a28": "Software Rev",
 }
 
+QUERIES = {
+    "lock":    [Topic.LOCK_STATE],
+    "power":   [Topic.POWER_STATE],
+    "alarm":   [Topic.ALARM],
+    "lights":  [Topic.LIGHT_MODE],
+    "level":   [Topic.ASSIST_LEVEL],
+    "region":  [Topic.REGION],
+    "boost":   [Topic.BOOST],
+    "battery": [Topic.BATTERY_LEVEL, Topic.BATTERY_SOC],
+    "all":     proto.STATUS_TOPICS,
+}
 
-async def _send_read(client, group: int, sub: int, param: int,
-                     label: str = "") -> list:
-    """Send a read command and collect responses."""
-    if not client.connected:
-        print("   Not connected")
-        return []
-    cmd = bytes([0x81, 0x00, 0x02, group, sub, param])
-    await client.send(cmd, label or "read")
-    await asyncio.sleep(0.3)
-    responses = []
-    for _ in range(3):
-        resp = await client.recv(0.3)
-        if resp:
-            responses.append(resp)
+S6_QUERIES = {
+    "lock":    [s6.Topic.LOCK_STATE],
+    "alarm":   [s6.Topic.ALARM],
+    "lights":  [s6.Topic.LIGHT_MODE],
+    "level":   [s6.Topic.ASSIST_LEVEL],
+    "battery": [s6.Topic.BATTERY_LEVEL],
+    "all":     s6.STATUS_TOPICS,
+}
+
+
+def print_topics(client, topics):
+    """Print the last known value of each topic."""
+    for topic in topics:
+        if topic in client.topics:
+            shown = client.describe(topic, client.topics[topic])
         else:
-            break
-    return responses
+            shown = "(no report)"
+        print(f"   {client.topic_name(topic):36s} {shown}")
 
 
-async def query_lock_state(client):
-    """Query current lock state (81 00 02 01 00 A0)"""
-    if not client.authenticated:
-        print("   Not authenticated")
+async def query(client, target: str):
+    """Query a state by name (see QUERIES and S6_QUERIES)."""
+    queries = S6_QUERIES if client.bike_model == "S6" else QUERIES
+    topics = queries.get(target)
+    if topics is None:
+        print(f"Unknown query target. Valid: {', '.join(queries)}")
         return
-    print("\nQuerying lock state...")
-    await _send_read(client, 0x01, 0x00, 0xA0, "read lock")
-
-
-async def query_alarm_state(client):
-    """Query current alarm state (81 00 02 01 01 A0)"""
-    if not client.authenticated:
-        print("   Not authenticated")
+    if not client.require_auth():
         return
-    print("\nQuerying alarm state...")
-    await _send_read(client, 0x01, 0x01, 0xA0, "read alarm")
+    print(f"\nQuerying {target}...")
+    await client.read_topics(topics)
+    print_topics(client, topics)
 
 
-async def query_light_mode(client):
-    """Query current light mode (81 00 02 01 00 6B)"""
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-    print("\nQuerying light mode...")
-    await _send_read(client, 0x01, 0x00, 0x6B, "read lights")
-
-
-async def query_power_state(client):
-    """Query current power state (81 00 02 03 00 A0)"""
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-    print("\nQuerying power state...")
-    await _send_read(client, 0x03, 0x00, 0xA0, "read power")
-
-
-async def query_boost_state(client):
-    """Query current boost state (81 00 02 03 01 A0)"""
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-    print("\nQuerying boost state...")
-    await _send_read(client, 0x03, 0x01, 0xA0, "read boost")
-
-
-async def query_power_level(client):
-    """Query current power assist level (81 00 02 30 00 A0)"""
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-    print("\nQuerying assist level...")
-    await _send_read(client, 0x30, 0x00, 0xA0, "read level")
+async def _read_gatt_battery(client):
+    """Battery level from the standard BLE Battery Service, if exposed."""
+    for svc in client.client.services:
+        for char in svc.characteristics:
+            if "2a19" in char.uuid.lower():
+                try:
+                    data = await client.client.read_gatt_char(char.uuid)
+                    if data:
+                        return data[0]
+                except Exception as e:
+                    client.log(f"Battery service read failed: {e}")
+    return None
 
 
 async def query_battery(client):
     """
     Query battery level.
 
-    Tries the standard BLE Battery Service characteristic (0x2A19) first.
-    Falls back to a protocol read command if not available.
+    On the S5/A5 this reads the battery topics (the percentage the app shows,
+    plus the raw state of charge). Falls back to the standard BLE Battery
+    Service characteristic (0x2A19) if the bike exposes one.
     """
     if not client.authenticated:
         print("   Not authenticated")
@@ -134,54 +123,32 @@ async def query_battery(client):
 
     print("\nQuerying battery...")
 
-    # Try standard BLE Battery Service
+    if client.bike_model == "S6":
+        level = s6.first_field(
+            (await client.read_topics([s6.Topic.BATTERY_LEVEL]))[s6.Topic.BATTERY_LEVEL])
+        if level is not None:
+            print(f"   Battery: {level}%")
+            return level
+
+    if client.bike_model == "S5A5":
+        values = await client.read_topics(QUERIES["battery"])
+        level = values[Topic.BATTERY_LEVEL]
+        soc = values[Topic.BATTERY_SOC]
+        if level is not None:
+            extra = f" (raw SoC {soc}%)" if soc is not None else ""
+            print(f"   Battery: {level}%{extra}")
+            return level
+        if soc is not None:
+            print(f"   Battery (raw SoC): {soc}%")
+            return soc
+
     if client.client and client.connected:
-        try:
-            for svc in client.client.services:
-                for char in svc.characteristics:
-                    if "2a19" in char.uuid.lower():
-                        try:
-                            data = await client.client.read_gatt_char(char.uuid)
-                            if data:
-                                level = data[0]
-                                print(f"   Battery: {level}%")
-                                return level
-                        except Exception as e:
-                            client.log(f"Battery service read failed: {e}")
-        except Exception as e:
-            client.log(f"Service enumeration failed: {e}")
+        level = await _read_gatt_battery(client)
+        if level is not None:
+            print(f"   Battery: {level}% (BLE Battery Service)")
+            return level
 
-    # Fallback: protocol read command
-    await _send_read(client, 0x0E, 0x00, 0xA0, "read battery")
-
-
-async def query_all(client):
-    """Query all known states sequentially."""
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-
-    print("\n" + "=" * 40)
-    print("   Querying All States")
-    print("=" * 40)
-
-    queries = [
-        query_lock_state,
-        query_alarm_state,
-        query_light_mode,
-        query_power_state,
-        query_boost_state,
-        query_power_level,
-        query_battery,
-    ]
-    for q in queries:
-        if not client.connected:
-            print("\n   Disconnected, stopping queries.")
-            break
-        await q(client)
-        await asyncio.sleep(0.2)
-
-    print("\n" + "=" * 40)
+    print("   No battery data available.")
 
 
 async def read_device_info(client):
@@ -196,7 +163,6 @@ async def read_device_info(client):
         return {}
 
     info = {}
-    found_any = False
 
     try:
         services = client.client.services
@@ -215,7 +181,6 @@ async def read_device_info(client):
                         value = data.decode("utf-8", errors="replace").strip('\x00')
                         if value:
                             info[name] = value
-                            found_any = True
                     except Exception as e:
                         client.log(f"Failed to read {name}: {e}")
 
@@ -225,7 +190,6 @@ async def read_device_info(client):
                     data = await client.client.read_gatt_char(char.uuid)
                     if data:
                         info["Battery"] = f"{data[0]}%"
-                        found_any = True
                 except Exception as e:
                     client.log(f"Failed to read battery: {e}")
 
@@ -259,8 +223,8 @@ async def show_bike_info(client):
     if client.creds:
         print(f"\n   Frame:         {client.creds.frame or 'Unknown'}")
         print(f"   Cert ID:       {client.creds.cert_id or 'Unknown'}")
-        role_name = "Owner" if client.creds.role == 7 else f"User (role={client.creds.role})"
-        print(f"   Role:          {role_name}")
+        role_name = proto.ROLE_NAMES.get(client.creds.role, "unknown role")
+        print(f"   Role:          {role_name} (role={client.creds.role})")
         if client.creds.expiry:
             dt = datetime.datetime.fromtimestamp(
                 client.creds.expiry, tz=datetime.timezone.utc
@@ -268,8 +232,10 @@ async def show_bike_info(client):
             print(f"   Cert Expiry:   {dt.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
     # Connection state
-    print(f"\n   Connected:     {client.connected}")
+    print(f"\n   Model:         {client.bike_model or 'Unknown'}")
+    print(f"   Connected:     {client.connected}")
     print(f"   Authenticated: {client.authenticated}")
+    print(f"   ATT MTU:       {client.mtu}")
 
     # GATT device info
     gatt_info = await read_device_info(client)
@@ -278,124 +244,57 @@ async def show_bike_info(client):
         for name, value in gatt_info.items():
             print(f"      {name}: {value}")
 
-    # Last known status
-    if client.last_status:
-        print("\n   Last Status:")
-        print(format_status(client.last_status))
+    # Last known bike state
+    state_topics = s6.STATUS_TOPICS if client.bike_model == "S6" else proto.STATUS_TOPICS
+    known = [t for t in state_topics if t in client.topics]
+    if known:
+        print("\n   Bike State:")
+        print_topics(client, known)
 
     print()
 
 
 def show_last_status(client):
-    """Display the last received CBOR status in a readable format."""
+    """Display the link-level status the bike reported."""
     if not client.last_status:
         print("\n   No status received yet.")
-        print("   The bike sends status updates automatically after commands.")
         return
 
     print("\n" + "=" * 40)
-    print("   Current Status")
+    print("   Link Status")
     print("=" * 40)
     print(format_status(client.last_status))
+    print(f"      Subscribed Topics: {len(client.subscribed)}")
     print()
 
 
 def format_status(status: dict) -> str:
-    """Format a CBOR status dict for human-readable display."""
+    """Format the AUTH_DETAILS / PARAM_UPDATE / MTU_UPDATE maps for display."""
     key_names = {
-        # Auth/connection
-        "enc": "Encryption",
+        # AUTH_DETAILS
         "auth": "Authenticated",
-        "enabled": "Enabled",
-        "ready": "Ready",
-        # State
-        "locked": "Locked",
-        "alarm": "Alarm Armed",
-        "boost": "Boost",
-        "boost_btn": "Boost Button",
-        "boost_button": "Boost Button",
-        # Motion
-        "spd": "Speed",
-        "speed": "Speed",
-        "cad": "Pedal RPM",
-        "rpm": "Pedal RPM",
-        "pedal_rpm": "Pedal RPM",
-        "torque": "Pedal Torque",
-        "trq": "Pedal Torque",
-        "pedal_torque": "Pedal Torque",
-        # Power
-        "bat": "Battery",
-        "battery": "Battery",
-        "pwr": "Assist Level",
-        "assist": "Assist Level",
-        "charging": "Charging",
-        # Temperature
-        "motor_temp": "Motor Temp",
-        "mt": "Motor Temp",
-        "driver_temp": "Driver Temp",
-        "dt": "Driver Temp",
-        "module_temp": "Module Temp",
-        "temp": "Temperature",
-        # Environment
-        "light": "Light Sensor",
-        "lux": "Light Sensor",
-        "light_sensor": "Light Sensor",
-        "humidity": "Humidity",
-        "hum": "Humidity",
-        "air_quality": "Air Quality",
-        "aq": "Air Quality",
-        # Distance
-        "dst": "Trip Distance",
-        "odo": "Odometer",
-        "trip": "Trip",
-        # Config
-        "gear": "Gear",
-        "region": "Region",
-        "fw": "Firmware",
-        "hw": "Hardware",
-        "err": "Error Code",
-        "error": "Error Code",
-        "motor": "Motor State",
-        "speed_limit": "Speed Limit",
+        "enc": "Link Encrypted",
+        # PARAM_UPDATE (connection parameters)
+        "interval": "Conn Interval",
+        "latency": "Peripheral Latency",
+        "timeout": "Supervision Timeout",
+        # MTU_UPDATE (data length parameters)
+        "tx_max_len": "TX Max Length",
+        "tx_max_time": "TX Max Time",
+        "rx_max_len": "RX Max Length",
+        "rx_max_time": "RX Max Time",
+        "err": "Error",
     }
-
-    # Keys with units for formatting
-    unit_keys = {
-        "spd": "km/h", "speed": "km/h",
-        "bat": "%", "battery": "%",
-        "cad": "RPM", "rpm": "RPM", "pedal_rpm": "RPM",
-        "torque": "Nm", "trq": "Nm", "pedal_torque": "Nm",
-        "dst": "km", "odo": "km", "trip": "km",
-        "motor_temp": "C", "mt": "C",
-        "driver_temp": "C", "dt": "C",
-        "module_temp": "C", "temp": "C",
-        "humidity": "%", "hum": "%",
-        "lux": "lux",
-    }
-
-    light_names = {0: "Off", 1: "On", 2: "On", 3: "Auto"}
-    level_names = {0: "Off", 1: "1", 2: "2", 3: "3", 4: "4"}
 
     lines = []
     for key, value in status.items():
         name = key_names.get(key, key)
-
         if isinstance(value, bool):
             value_str = "Yes" if value else "No"
-        elif key in ("light", "light_sensor") and isinstance(value, int) and value in light_names:
-            value_str = light_names[value]
-        elif key in ("pwr", "assist") and isinstance(value, int):
-            value_str = level_names.get(value, str(value))
         elif isinstance(value, bytes):
             value_str = value.hex()
-        elif key in unit_keys:
-            if isinstance(value, float):
-                value_str = f"{value:.1f} {unit_keys[key]}"
-            else:
-                value_str = f"{value} {unit_keys[key]}"
         else:
             value_str = str(value)
-
         lines.append(f"      {name}: {value_str}")
 
     return "\n".join(lines)

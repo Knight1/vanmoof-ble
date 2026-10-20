@@ -28,13 +28,13 @@ jobs:
       run: |
         python -m py_compile main.py
         python -m py_compile utils/credentials_utils.py
-        python -m py_compile utils/crypto_utils.py
-        python -m py_compile utils/protocol_utils.py
+        python -m py_compile utils/error_codes.py
+        python -m py_compile utils/protocol_codes.py
+        python -m py_compile utils/s6_protocol.py
         python -m py_compile commands/lock.py
         python -m py_compile commands/alarm.py
         python -m py_compile commands/sound.py
         python -m py_compile commands/power.py
-        python -m py_compile commands/ride.py
         python -m py_compile commands/lights.py
         python -m py_compile commands/info.py
         python -m py_compile commands/region.py
@@ -42,3 +42,6 @@ jobs:
 
     - name: Run help
       run: python main.py --help
+
+    - name: Run tests and fuzzers
+      run: python -m unittest discover -s tests -t . -v

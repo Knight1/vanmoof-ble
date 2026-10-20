@@ -1,91 +1,53 @@
 """
-VanMoof S5/A5/S6 BLE Sound/Feedback Commands
+VanMoof S5/A5 BLE Bell Sound Commands
 
-Provides functions to trigger bell, horn, and generic sounds on VanMoof bikes via BLE.
+The S5/A5 bell plays one of a few built-in tones; the app selects it through
+settings/bell_sound/set. Sounds can't be played on demand with an owner or
+shared-bike certificate: the bike's ACL doesn't let those roles write
+ux/sound/play.
 
 Functions:
-    play_sound(client, sound_id=1):   Play a generic sound
-    bell_ding(client):                Bell ding (single)
-    bell_double_ding(client):         Bell double ding
-    horn_sound(client):               Horn sound
+    set_bell_sound(client, tone): Select the bell tone (no tone: list them)
 
 Each function expects an authenticated VanMoofClient instance.
 
-Command group: 0x02 (sound/feedback)
+| Model | Topic                            | Values                        |
+|-------|----------------------------------|-------------------------------|
+| S5/A5 | 0x0073 settings/bell_sound/set   | protocol_codes.BELL_SOUNDS    |
+| S6    | 0x0142 bell_sound (SET)          | s6_protocol.BELL_SOUNDS       |
 
-| Function           | Command (hex)          | Description         |
-|--------------------|-----------------------|---------------------|
-| play_sound         | 81 00 03 01 00 21 <n> | Play sound <n>      |
-| bell_ding          | 81 00 03 02 00 A0 01  | Bell ding (single)  |
-| bell_double_ding   | 81 00 03 02 00 A0 02  | Bell double ding    |
-| horn_sound         | 81 00 03 02 01 A0 01  | Horn sound          |
+The two models offer different tones. The S5/A5 confirm on 0x0072
+settings/bell_sound; the S6 plays the tone it selects.
 """
-import asyncio
+from utils import protocol_codes as proto
+from utils import s6_protocol as s6
+from utils.protocol_codes import Topic
 
-async def play_sound(client, sound_id: int = 1):
-    """
-    Play a sound on the bike (default sound_id=1)
-    BLE Packet: 81 00 03 01 00 21 <sound_id>
-    """
-    if not client.authenticated:
-        print("   ❌ Not authenticated")
-        return
-    print(f"\n🔊 Playing sound {sound_id}...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x00, 0x21, sound_id])
-    await client.send(cmd, "sound")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
 
-async def bell_ding(client):
-    """
-    Play a single bell ding sound.
-    BLE Packet: 81 00 03 02 00 A0 01
-    """
-    if not client.authenticated:
-        print("   ❌ Not authenticated")
+async def set_bell_sound(client, tone: str = None):
+    """Select the bell tone, or list the tones when none is given."""
+    if not client.require_auth():
         return
-    print("\n🔔 Bell ding...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x02, 0x00, 0xA0, 0x01])
-    await client.send(cmd, "bell ding")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
+    is_s6 = client.bike_model == "S6"
+    tones = s6.BELL_SOUNDS if is_s6 else proto.BELL_SOUNDS
+    if tone is None:
+        current = client.topics.get(s6.Topic.BELL_SOUND if is_s6 else Topic.BELL_SOUND)
+        current = s6.first_field(current) if is_s6 else current
+        print("\n   Bell tones:")
+        for value, name in tones.items():
+            marker = "   <- current" if value == current else ""
+            print(f"      {name}{marker}")
+        print("   Usage: bellsound <tone>")
+        return
 
-async def bell_double_ding(client):
-    """
-    Play a double bell ding sound.
-    BLE Packet: 81 00 03 02 00 A0 02
-    """
-    if not client.authenticated:
-        print("   ❌ Not authenticated")
+    values = s6.BELL_SOUND_VALUES if is_s6 else proto.BELL_SOUND_VALUES
+    value = values.get(tone.lower())
+    if value is None:
+        print(f"   ❌ Unknown tone. Valid: {', '.join(values)}")
         return
-    print("\n🔔🔔 Bell double ding...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x02, 0x00, 0xA0, 0x02])
-    await client.send(cmd, "bell double ding")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
-
-async def horn_sound(client):
-    """
-    Play the horn sound.
-    BLE Packet: 81 00 03 02 01 A0 01
-    """
-    if not client.authenticated:
-        print("   ❌ Not authenticated")
+    print(f"\n🔔 Setting bell sound to {tone}...")
+    if is_s6:
+        await client.s6_apply_setting("Bell sound", s6.Topic.BELL_SOUND, [value])
         return
-    print("\n📢 Horn sound...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x02, 0x01, 0xA0, 0x01])
-    await client.send(cmd, "horn sound")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
+    await client.apply_setting("Bell sound", Topic.BELL_SOUND_SET, value,
+                               Topic.BELL_SOUND, f"bell sound {tone}")

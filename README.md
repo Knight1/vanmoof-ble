@@ -1,22 +1,25 @@
-# VanMoof BLE Communication
+# VanMoof BLE
 
 A Python tool for communicating with VanMoof S5, A5, and S6 e-bikes via Bluetooth Low Energy (BLE). Authenticate, control, and query your bike directly from any computer or device with Bluetooth.
 
 ## Features
 
 - **Authentication** - Ed25519 certificate-based authentication over BLE
-- **Lock / Unlock** - Lock and unlock the bike remotely
-- **Alarm** - Arm, disarm, and trigger the alarm
-- **Sound** - Bell (single/double ding), horn, and custom sounds
-- **Power Control** - Power on/off bike electronics, enable/disable boost mode
+- **Unlock** - Unlock the bike remotely
+- **Alarm** - Enable and disable the alarm
+- **Bell Tone** - Select the bell sound (tones differ between S5/A5 and S6)
 - **Assist Level** - Set motor assist level (0-4)
-- **Lights** - Control front light mode (off, on, auto)
-- **Speed Region** - Set speed region (EU 25 km/h, US 32 km/h, JP 24 km/h)
-- **Status Queries** - Query lock state, alarm, lights, power, battery, and more
+- **Lights** - Control light mode (off, on, auto)
+- **Speed Region** - Set speed region (EU 25 km/h, US 32 km/h, JP 24 km/h, offroad; S5/A5)
+- **Status Queries** - Query lock state, power state, alarm, lights, assist level, region, battery
+- **Telemetry** - Live ride, battery and sensor readings
+- **Module Status** - Per-module status derived from the bike's CAN-bus heartbeats
 - **Device Info** - Read firmware version, model, serial from BLE GATT
 - **BLE Scanning** - Discover nearby VanMoof bikes
-- **Raw Commands** - Send arbitrary hex commands for protocol exploration
+- **Protocol Tools** - Write any topic, decode captured packets, send raw hex
 - **Debug Mode** - Full packet logging with optional timestamps
+
+Both the S5/A5 and the S6 are supported. They use different BLE protocols; the client detects the model and speaks the right one. The S5/A5-only commands (region, telemetry streaming and module status) are noted below.
 
 ## Prerequisites
 
@@ -78,91 +81,74 @@ python main.py --privkey "..." --cert "..." --debug --timestamp
 
 ## Interactive Commands
 
-Once connected and authenticated, the following commands are available:
+Once connected and authenticated, the client reads the bike's state (lock, battery, settings) and the following commands are available. `unlock`, `arm`/`disarm`, `power`, `lights`, `bellsound`, `battery`, `query`, `read`, `write` and `topics` work on both models; `region`, `subscribe`/`unsubscribe`, `sensors`, `monitor` and `modules` are S5/A5 only. The topic/packet columns below show the S5/A5 wire form (see [docs/PROTOCOL.md](docs/PROTOCOL.md) for the S6 equivalents).
 
 ### Lock / Security
 
-| Command   | Description              | BLE Packet (hex)        |
-|-----------|--------------------------|-------------------------|
-| `unlock`  | Unlock the bike          | `81 00 03 01 00 A0 01`  |
-| `lock`    | Lock the bike            | `81 00 03 01 00 A0 00`  |
-| `arm`     | Arm (enable) alarm       | `81 00 03 01 01 A0 01`  |
-| `disarm`  | Disarm (disable) alarm   | `81 00 03 01 01 A0 00`  |
-| `alarm`   | Trigger alarm sound      | `81 00 03 01 02 A0 01`  |
+| Command   | Description              | Topic                         | BLE Packet (hex)        |
+|-----------|--------------------------|-------------------------------|-------------------------|
+| `unlock`  | Unlock the bike          | `0x00A0` ux/lock/unlock = 1   | `81 00 03 01 00 A0 01`  |
+| `lock`    | Explains how the S5/A5 locks (there is no BLE lock command) | - | - |
+| `arm`     | Enable the alarm         | `0x006F` settings/alarm/set   | `81 00 03 01 00 6F F5`  |
+| `disarm`  | Disable the alarm        | `0x006F` settings/alarm/set   | `81 00 03 01 00 6F F4`  |
 
-### Sound
+### Settings
 
-| Command       | Description              | BLE Packet (hex)        |
-|---------------|--------------------------|-------------------------|
-| `bell`        | Single bell ding         | `81 00 03 02 00 A0 01`  |
-| `bell2`       | Double bell ding         | `81 00 03 02 00 A0 02`  |
-| `horn`        | Horn sound               | `81 00 03 02 01 A0 01`  |
-| `beep`        | Play default sound       | `81 00 03 01 00 21 01`  |
-| `sound <N>`   | Play sound by ID         | `81 00 03 01 00 21 <N>` |
+| Command                         | Description         | Topic                               | BLE Packet (hex)        |
+|---------------------------------|---------------------|-------------------------------------|-------------------------|
+| `power <0-4>`                   | Set assist level    | `0x0067` settings/assist_level/set  | `81 00 03 01 00 67 <N>` |
+| `lights <off\|on\|auto>`         | Set light mode      | `0x006B` settings/light_mode/set    | `81 00 03 01 00 6B <N>` |
+| `region <eu\|us\|jp\|offroad>`    | Set speed region (S5/A5) | `0x0062` settings/region/set   | `81 00 03 01 00 62 <N>` |
+| `bellsound [tone]`              | Select bell tone    | `0x0073` settings/bell_sound/set    | `81 00 03 01 00 73 <N>` |
 
-### Ride Control
+Values: lights `1` on, `2` off, `3` auto; region `0` EU, `1` US, `2` JP, `3` offroad; bell `0` ding_dong, `1` party_horn, `2` ping, `3` vanmoof, `4` ship_horn. The bike confirms each change by re-publishing the setting, which the client prints.
 
-| Command    | Description              | BLE Packet (hex)        |
-|------------|--------------------------|-------------------------|
-| `poweron`  | Power on electronics     | `81 00 03 03 00 A0 01`  |
-| `poweroff` | Power off electronics    | `81 00 03 03 00 A0 00`  |
-| `booston`  | Enable boost mode        | `81 00 03 03 01 A0 01`  |
-| `boostoff` | Disable boost mode       | `81 00 03 03 01 A0 00`  |
+### Telemetry (Real-time Sensor Data, S5/A5)
 
-### Power & Configuration
+| Command                         | Description                                          |
+|---------------------------------|------------------------------------------------------|
+| `subscribe [group\|topic ...]`   | Subscribe to topics (default: telemetry; groups: `status`, `telemetry`, `modules`, `all`) |
+| `unsubscribe <group\|topic ...>` | Stop topics                                         |
+| `sensors`                       | Show last known readings                             |
+| `monitor`                       | Live display of changing readings (Ctrl+C to stop)   |
+| `modules`                       | Show the status of each module (CAN-bus heartbeats)  |
 
-| Command                 | Description              | BLE Packet (hex)        |
-|-------------------------|--------------------------|-------------------------|
-| `power <0-4>`           | Set assist level         | `81 00 04 30 00 A0 <N>` |
-| `lights <off\|on\|auto>` | Set light mode           | `81 00 03 01 00 6B <N>` |
-| `region <eu\|us\|jp>`    | Set speed region         | `81 00 04 30 01 A0 <N>` |
+Available readings:
 
-### Telemetry (Real-time Sensor Data)
+| Group        | Topics                                                                 |
+|--------------|------------------------------------------------------------------------|
+| Ride         | speed, pedal RPM, torque, motor speed, motor current, motor temperature, brake level, boost, calories, ride distance |
+| Battery      | battery % (as shown in the app), raw state of charge, power state      |
+| Environment  | light, humidity, temperature, air quality sensors                      |
+| Modules      | status of ble, battery, charger, e-lock, e-shifter, lights, modem, motor, power control, power pedal, user ECU |
 
-The bike streams real-time telemetry via BLE notifications when powered on. Available sensors vary by model and firmware version.
-
-| Command       | Description                                        |
-|---------------|----------------------------------------------------|
-| `monitor`     | Start live telemetry display (Ctrl+C to stop)      |
-| `sensors`     | Show last known sensor readings                    |
-| `subscribe`   | Activate telemetry stream (powers on bike)         |
-
-Available sensor readings:
-
-| Sensor         | Description                      | Unit   |
-|----------------|----------------------------------|--------|
-| Speed          | Current bike speed               | km/h   |
-| Pedal RPM      | Pedal cadence                    | RPM    |
-| Pedal Torque   | Pedal torque                     | Nm     |
-| Boost Button   | Boost button pressed             | -      |
-| Battery        | Battery charge level             | %      |
-| Assist Level   | Current motor assist level       | 0-4    |
-| Motor Temp     | Motor temperature                | C      |
-| Driver Temp    | Motor driver/controller temp     | C      |
-| Module Temp    | Main module temperature          | C      |
-| Light Sensor   | Ambient light level              | -      |
-| Humidity       | Humidity sensor                  | %      |
-| Air Quality    | Air quality index (S6)           | AQI    |
+Ride readings mostly update while riding. Values are shown as the bike sends them unless the unit is known.
 
 ### Information
 
 | Command            | Description                                   |
 |--------------------|-----------------------------------------------|
-| `status`           | Show last received CBOR status                |
-| `info`             | Show bike info (credentials, GATT device info)|
+| `status`           | Show link status (auth, encryption, connection parameters) |
+| `info`             | Show bike info (credentials, GATT device info, bike state) |
 | `battery`          | Query battery level                           |
 | `services`         | List all BLE GATT services and characteristics|
 | `query <target>`   | Query specific state (see below)              |
+| `topics`           | Show all last decoded topic values            |
 
-Query targets: `lock`, `alarm`, `lights`, `power`, `boost`, `level`, `region`, `battery`, `all`
+Query targets (S5/A5): `lock`, `power`, `alarm`, `lights`, `level`, `region`, `boost`, `battery`, `all`. On the S6: `lock`, `alarm`, `lights`, `level`, `battery`, `all`.
 
-### Utility
+### Protocol Tools
 
-| Command            | Description                                   |
-|--------------------|-----------------------------------------------|
-| `raw <hex>`        | Send raw hex bytes (e.g., `raw 81 00 03 01 00 A0 01`) |
-| `help`             | Show all available commands                   |
-| `quit`             | Disconnect and exit                           |
+| Command                 | Description                                   |
+|-------------------------|-----------------------------------------------|
+| `read <topic ...>`      | Read one or more topic values (e.g., `read 0x022a`) |
+| `write <topic> <value>` | Write a topic value (e.g., `write 0x006b 2`)  |
+| `decode <hex>`          | Decode a captured S5/A5 or S6 message or fragment offline |
+| `raw <hex>`             | Send raw hex bytes (e.g., `raw 81 00 03 01 00 A0 01`) |
+| `errors`                | Explain how errors are reported               |
+| `error <code>`          | Format an error number or S6 DTC (e.g. `error 0x9050`) |
+| `help`                  | Show all available commands                   |
+| `quit`                  | Disconnect and exit                           |
 
 ## Project Structure
 
@@ -172,20 +158,22 @@ vanmoof-ble/
 ├── requirements.txt           # Python dependencies
 ├── README.md                  # This file
 ├── commands/                  # BLE command modules
-│   ├── alarm.py               # Alarm arm/disarm/trigger
+│   ├── alarm.py               # Alarm enable/disable
 │   ├── info.py                # Status queries, device info, GATT services
 │   ├── lights.py              # Light mode control
-│   ├── lock.py                # Lock/unlock
+│   ├── lock.py                # Unlock
 │   ├── power.py               # Assist level control
-│   ├── region.py              # Speed region control (EU/US/JP)
-│   ├── ride.py                # Power on/off, boost
-│   ├── sound.py               # Bell, horn, sounds
-│   └── telemetry.py           # Real-time sensor data streaming
+│   ├── region.py              # Speed region control (EU/US/JP/offroad)
+│   ├── sound.py               # Bell tone selection
+│   └── telemetry.py           # Telemetry and module status
 ├── utils/                     # Utility modules
 │   ├── credentials_utils.py   # Certificate parsing & key validation
-│   ├── crypto_utils.py        # Ed25519 signing & key loading
-│   └── protocol_utils.py      # Packet builders (read/write/config/auth)
+│   ├── error_codes.py         # Faithful error / DTC formatting
+│   ├── protocol_codes.py      # S5/A5 topic protocol: framing, topics, values
+│   └── s6_protocol.py         # S6 message protocol: framing, topics, values
+├── tests/                     # unittest suite + seeded fuzzers (tests/test_fuzz.py)
 └── docs/
+    ├── BLEUUID.md             # BLE services and characteristics
     └── PROTOCOL.md            # Complete BLE protocol reference
 ```
 
@@ -193,29 +181,23 @@ vanmoof-ble/
 
 For the full protocol specification, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-The VanMoof S5/A5 uses a custom BLE protocol over a single GATT characteristic (`e3d80001-3416-4a54-b011-68d41fdcbfcf`):
+The VanMoof S5/A5 speaks a small publish/subscribe protocol over a single GATT characteristic (`e3d80001-3416-4a54-b011-68d41fdcbfcf`). Each 16-bit topic id maps to a topic on the bike's internal MQTT bus. The S6 uses a related message format on its own characteristic (`df286101-…`); see [docs/PROTOCOL.md](docs/PROTOCOL.md). The S5/A5 flow:
 
-1. **Init Exchange** - Bike sends `{enc: false, auth: false}`, client echoes back
-2. **Certificate** - Client sends CA-signed certificate (64-byte signature + CBOR payload)
-3. **Challenge-Response** - Bike sends 16-byte nonce, client signs with Ed25519 key
-4. **Confirmation** - Bike confirms with `{auth: true}`
+1. **Certificate** - Client sends its CA-signed certificate (64-byte signature + CBOR payload)
+2. **Challenge-Response** - Bike sends a 16-byte nonce, client signs it with its Ed25519 key
+3. **Confirmation** - Bike confirms with `{auth: true}` (a rejected certificate makes the bike disconnect)
+4. **Subscribe** - Client subscribes to the topics it wants; state topics arrive immediately
 
 ### Packet Format
 
 ```
-[frame_byte] [0x00] [module/length] [subtype] [payload...]
+[fragment header: 0x81 first / 0x01 continuation] [remaining: 2 bytes BE] [PayloadType] [body...]
 
-Modules:  0x02 = Read    0x03 = Write    0x04 = Configure
+PayloadType: 1 = topic value   2 = subscribe   3 = certificate   4 = challenge
+             5 = auth details  6 = data length 7 = connection params
 ```
 
-### Command Groups
-
-| Group | Hex    | Commands                                 |
-|-------|--------|------------------------------------------|
-| Security | `0x01` | Lock, alarm, lights, sounds           |
-| Sound    | `0x02` | Bell, horn                            |
-| Ride     | `0x03` | Power on/off, boost                   |
-| Config   | `0x30` | Assist level, speed region            |
+A topic value is `[topic: 2 bytes BE][CBOR value]`; settings are written to their `.../set` topic and the bike re-publishes the value topic.
 
 ## Extracting Credentials for debugging
 

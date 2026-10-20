@@ -1,63 +1,45 @@
 """
-VanMoof S5/A5/S6 BLE Alarm Commands
+VanMoof S5/A5 BLE Alarm Commands
 
-Provides functions to arm, disarm, and trigger the alarm via BLE.
+Provides functions to enable and disable the alarm via BLE.
 
 Functions:
-    arm_alarm(client):           Arm (enable) alarm
-    disarm_alarm(client):        Disarm (disable) alarm
-    trigger_alarm_sound(client): Trigger alarm sound
+    arm_alarm(client):    Enable the alarm
+    disarm_alarm(client): Disable the alarm
 
 Each function expects an authenticated VanMoofClient instance.
 
-Command group: 0x01 (alarm)
+| Model | Topic                           | arm / disarm   |
+|-------|---------------------------------|----------------|
+| S5/A5 | 0x006F settings/alarm/set       | true / false   |
+| S6    | 0x0172 alarm (SET)              | [1] / [0]      |
 
-| Function             | Command (hex)          | Description         |
-|----------------------|-----------------------|---------------------|
-| arm_alarm            | 81 00 03 01 01 A0 01  | Enable alarm        |
-| disarm_alarm         | 81 00 03 01 01 A0 00  | Disable alarm       |
-| trigger_alarm_sound  | 81 00 03 01 02 A0 01  | Immediate alarm     |
+Values as the official app writes them. The S5/A5 confirm on 0x006E
+settings/alarm. There is no BLE command to trigger the alarm.
 """
-import asyncio
+from utils import s6_protocol as s6
+from utils.protocol_codes import Topic
+
 
 async def arm_alarm(client):
-    """Arm (enable) the bike alarm (BLE: 81 00 03 01 01 A0 01)"""
-    if not client.authenticated:
-        print("   Not authenticated")
+    """Enable the bike alarm (topic 0x006F settings/alarm/set = true)"""
+    if not client.require_auth():
         return
     print("\nArming alarm...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x01])
-    await client.send(cmd, "arm alarm")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
+    if client.bike_model == "S6":
+        await client.s6_apply_setting("Alarm", s6.Topic.ALARM, [1])
+        return
+    await client.apply_setting("Alarm", Topic.ALARM_SET, True, Topic.ALARM,
+                               "arm alarm")
+
 
 async def disarm_alarm(client):
-    """Disarm (disable) the bike alarm (BLE: 81 00 03 01 01 A0 00)"""
-    if not client.authenticated:
-        print("   Not authenticated")
+    """Disable the bike alarm (topic 0x006F settings/alarm/set = false)"""
+    if not client.require_auth():
         return
     print("\nDisarming alarm...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x01, 0xA0, 0x00])
-    await client.send(cmd, "disarm alarm")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
-
-async def trigger_alarm_sound(client):
-    """Trigger the immediate alarm sound (BLE: 81 00 03 01 02 A0 01)"""
-    if not client.authenticated:
-        print("   Not authenticated")
+    if client.bike_model == "S6":
+        await client.s6_apply_setting("Alarm", s6.Topic.ALARM, [0])
         return
-    print("\nTriggering alarm sound...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x02, 0xA0, 0x01])
-    await client.send(cmd, "trigger alarm")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
+    await client.apply_setting("Alarm", Topic.ALARM_SET, False, Topic.ALARM,
+                               "disarm alarm")

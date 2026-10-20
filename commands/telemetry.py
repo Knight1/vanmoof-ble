@@ -1,290 +1,154 @@
 """
-VanMoof S5/A5/S6 BLE Telemetry - Real-time Sensor Data
+VanMoof S5/A5 BLE Telemetry - Real-time Sensor Data
 
-The bike streams real-time telemetry data via BLE notifications while
-riding. This module provides a live monitor that captures, parses, and
-displays sensor readings as they arrive.
+The S5/A5 publish ride, battery and sensor data as topics. Nothing is sent
+until the client subscribes: 'subscribe' asks for the telemetry topics, after
+which the bike pushes each value when it changes (ride data mostly while
+riding).
 
-Available sensors (varies by model/firmware):
-    speed          Current speed (km/h)
-    pedal_rpm      Pedal cadence (RPM)
-    pedal_torque   Pedal torque (Nm)
-    assist_level   Current motor assist level
-    boost_button   Boost button pressed
-    battery        Battery level (%)
-    motor_temp     Motor temperature (C)
-    driver_temp    Motor driver/controller temperature (C)
-    module_temp    Main module temperature (C)
-    light_sensor   Ambient light sensor value
-    humidity       Humidity sensor (%)
-    air_quality    Air quality index (S6)
-    distance       Trip distance (km)
-    locked         Lock state
+Available readings (topic ids, see utils/protocol_codes.py):
+    Ride         speed 0x0050, pedal_rpm 0x0052, torque 0x0054,
+                 motor_speed 0x0055, motor_current 0x0056,
+                 motor_temperature 0x0053, brake_level 0x0057, boost 0x0060,
+                 calories 0x0049, ride distance 0x0051
+    Battery      soc_app 0x0018, soc 0x0010, power state 0x0001
+    Environment  ux/sensor/light 0x0081, humidity 0x0082,
+                 temperature 0x0083, air 0x0084
+    Modules      device/<module>/status 0x0030-0x003E, derived by the bike
+                 from each sub-module's CAN-bus heartbeat
+
+Values are shown as the bike sends them unless the unit is known.
 
 Functions:
-    start_monitor(client):    Start live telemetry display (Ctrl+C to stop)
-    show_telemetry(client):   Show last known sensor readings
-    subscribe_telemetry(client): Send subscription command for telemetry stream
+    subscribe_telemetry(client): Subscribe to the telemetry topics
+    show_telemetry(client):      Show last known readings, grouped
+    start_monitor(client):       Live display of changing readings (Ctrl+C to stop)
+    show_modules(client):        Show the status of each module (CAN heartbeats)
 """
 
 import asyncio
-import cbor2
 import time
 
-
-# All known telemetry field names mapped to human-readable labels and units
-SENSOR_FIELDS = {
-    # Motion
-    "spd":          ("Speed",              "km/h"),
-    "speed":        ("Speed",              "km/h"),
-    "cad":          ("Pedal RPM",          "RPM"),
-    "rpm":          ("Pedal RPM",          "RPM"),
-    "pedal_rpm":    ("Pedal RPM",          "RPM"),
-    "torque":       ("Pedal Torque",       "Nm"),
-    "trq":          ("Pedal Torque",       "Nm"),
-    "pedal_torque": ("Pedal Torque",       "Nm"),
-
-    # Assist
-    "pwr":          ("Assist Level",       ""),
-    "assist":       ("Assist Level",       ""),
-    "boost":        ("Boost Active",       ""),
-    "boost_btn":    ("Boost Button",       ""),
-    "boost_button": ("Boost Button",       ""),
-
-    # Battery & Power
-    "bat":          ("Battery",            "%"),
-    "battery":      ("Battery",            "%"),
-    "charging":     ("Charging",           ""),
-
-    # Temperatures
-    "motor_temp":   ("Motor Temp",         "C"),
-    "mt":           ("Motor Temp",         "C"),
-    "driver_temp":  ("Driver Temp",        "C"),
-    "dt":           ("Driver Temp",        "C"),
-    "module_temp":  ("Module Temp",        "C"),
-    "temp":         ("Temperature",        "C"),
-
-    # Environment (S6 and later)
-    "light":        ("Light Sensor",       ""),
-    "lux":          ("Light Sensor",       "lux"),
-    "light_sensor": ("Light Sensor",       ""),
-    "humidity":     ("Humidity",           "%"),
-    "hum":          ("Humidity",           "%"),
-    "air_quality":  ("Air Quality",        "AQI"),
-    "aq":           ("Air Quality",        "AQI"),
-
-    # State
-    "locked":       ("Locked",             ""),
-    "alarm":        ("Alarm Armed",        ""),
-    "enabled":      ("Enabled",            ""),
-    "ready":        ("Ready",              ""),
-    "err":          ("Error Code",         ""),
-    "error":        ("Error Code",         ""),
-
-    # Distance
-    "dst":          ("Trip Distance",      "km"),
-    "odo":          ("Odometer",           "km"),
-    "trip":         ("Trip",               "km"),
-
-    # Auth/Enc (internal, but captured)
-    "enc":          ("Encryption",         ""),
-    "auth":         ("Authenticated",      ""),
-
-    # Region/Config
-    "region":       ("Region",             ""),
-    "gear":         ("Gear",               ""),
-    "fw":           ("Firmware",           ""),
-    "hw":           ("Hardware",           ""),
-}
+from utils import protocol_codes as proto
+from utils.protocol_codes import Topic
 
 
-def _format_value(key: str, value) -> str:
-    """Format a sensor value for display."""
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    if isinstance(value, bytes):
-        return value.hex()
+GROUPS = (
+    ("Ride", (Topic.SPEED, Topic.PEDAL_RPM, Topic.TORQUE, Topic.MOTOR_SPEED,
+              Topic.MOTOR_CURRENT, Topic.MOTOR_TEMPERATURE, Topic.BRAKE_LEVEL,
+              Topic.BOOST, Topic.CALORIES, Topic.RIDE_DISTANCE)),
+    ("Battery", (Topic.BATTERY_LEVEL, Topic.BATTERY_SOC, Topic.POWER_STATE)),
+    ("Environment", (Topic.SENSOR_LIGHT, Topic.SENSOR_HUMIDITY,
+                     Topic.SENSOR_TEMPERATURE, Topic.SENSOR_AIR)),
+    ("Bike", (Topic.LOCK_STATE, Topic.DISTANCE, Topic.ASSIST_LEVEL,
+              Topic.LIGHT_MODE, Topic.REGION, Topic.ESHIFTER_GEAR)),
+)
 
-    label, unit = SENSOR_FIELDS.get(key, (key, ""))
+_MISSING = object()
 
-    if isinstance(value, float):
-        formatted = f"{value:.1f}"
-    else:
-        formatted = str(value)
 
-    if unit:
-        return f"{formatted} {unit}"
-    return formatted
+def _short_name(topic: int) -> str:
+    """Compact label for a topic: its last path element, or the last two
+    joined when that alone is ambiguous (power/state, device/<ecu>/status)."""
+    parts = proto.topic_name(topic).split("/")
+    if parts[-1] in ("state", "status") and len(parts) > 1:
+        owner = parts[-3] if parts[-2] == "info" and len(parts) > 2 else parts[-2]
+        return f"{owner}_{parts[-1]}"
+    return parts[-1]
+
+
+async def subscribe_telemetry(client):
+    """Subscribe to the telemetry topics."""
+    if not client.require_s5():
+        return
+
+    print("\nSubscribing to telemetry topics...")
+    await client.subscribe(proto.TELEMETRY_TOPICS, "subscribe (telemetry)")
+    print("   Ride readings update while riding. Use 'sensors' or 'monitor'.")
 
 
 def show_telemetry(client):
-    """
-    Display last known telemetry/sensor readings.
-
-    Shows all values from the accumulated last_status dict,
-    organized by category.
-    """
-    if not client.last_status:
+    """Display the last known readings, grouped by category."""
+    if client.bike_model == "S6":
+        print("   Not available on the S6 (use 'query all' or 'topics')")
+        return
+    if not client.topics:
         print("\n   No telemetry data received yet.")
-        print("   Telemetry streams when the bike is powered on.")
-        print("   Use 'monitor' for live display or 'poweron' first.")
+        print("   Use 'subscribe' to start receiving it.")
         return
 
     print("\n" + "=" * 45)
     print("   Sensor Readings")
     print("=" * 45)
 
-    # Group by category
-    categories = {
-        "Motion":      ["spd", "speed", "cad", "rpm", "pedal_rpm",
-                        "torque", "trq", "pedal_torque"],
-        "Assist":      ["pwr", "assist", "boost", "boost_btn", "boost_button"],
-        "Battery":     ["bat", "battery", "charging"],
-        "Temperature": ["motor_temp", "mt", "driver_temp", "dt",
-                        "module_temp", "temp"],
-        "Environment": ["light", "lux", "light_sensor", "humidity", "hum",
-                        "air_quality", "aq"],
-        "Distance":    ["dst", "odo", "trip"],
-        "State":       ["locked", "alarm", "enabled", "ready",
-                        "enc", "auth", "err", "error"],
-        "Config":      ["region", "gear", "fw", "hw"],
-    }
+    for group, topics in GROUPS:
+        known = [t for t in topics if t in client.topics]
+        if not known:
+            continue
+        print(f"\n   {group}:")
+        for topic in known:
+            pretty = proto.describe_topic_value(topic, client.topics[topic])
+            print(f"      {_short_name(topic):20s} {pretty}")
 
-    shown_keys = set()
-    for cat_name, cat_keys in categories.items():
-        cat_values = {}
-        for k in cat_keys:
-            if k in client.last_status:
-                label, _ = SENSOR_FIELDS.get(k, (k, ""))
-                cat_values[label] = _format_value(k, client.last_status[k])
-                shown_keys.add(k)
-
-        if cat_values:
-            print(f"\n   {cat_name}:")
-            for label, val in cat_values.items():
-                print(f"      {label:20s} {val}")
-
-    # Show any unknown keys
-    unknown = {k: v for k, v in client.last_status.items()
-               if k not in shown_keys}
-    if unknown:
-        print(f"\n   Other:")
-        for k, v in unknown.items():
-            print(f"      {k:20s} {_format_value(k, v)}")
-
+    if not all(t in client.subscribed for t in proto.TELEMETRY_TOPICS):
+        print("\n   (Ride and sensor topics need 'subscribe' first.)")
     print()
-
-
-async def subscribe_telemetry(client):
-    """
-    Request the bike to start streaming telemetry data.
-
-    The bike sends CBOR status updates via notifications. This function
-    subscribes to those updates. Use 'poweron' separately if the bike
-    needs to be powered on first.
-    """
-    if not client.authenticated:
-        print("   Not authenticated")
-        return
-
-    print("\nListening for telemetry data...")
-    print("   Sensor data will appear as the bike sends it.")
-    print("   Use 'poweron' if the bike is not yet powered on.")
-
-    # Drain any queued responses
-    for _ in range(5):
-        resp = await client.recv(0.3)
-        if not resp:
-            break
 
 
 async def start_monitor(client):
     """
     Start live telemetry monitoring.
 
-    Displays real-time sensor readings as they arrive from the bike.
-    The notification handler (_on_notify) already captures CBOR status
-    updates into client.last_status. This function periodically
-    refreshes a formatted display.
-
-    Press Ctrl+C to stop monitoring and return to the command prompt.
+    Prints every reading that changes as it arrives. Press Ctrl+C to stop
+    monitoring and return to the command prompt.
     """
-    if not client.authenticated:
-        print("   Not authenticated")
+    if not client.require_s5():
         return
+
+    if not all(t in client.subscribed for t in proto.TELEMETRY_TOPICS):
+        await client.subscribe(proto.TELEMETRY_TOPICS, "subscribe (telemetry)")
 
     print("\n" + "=" * 45)
     print("   Live Telemetry Monitor")
     print("   Press Ctrl+C to stop")
-    print("=" * 45)
-
-    print("\n   Listening for status updates from the bike.")
-    print("   Use 'poweron' first if the bike is not streaming data.\n")
+    print("=" * 45 + "\n")
 
     last_snapshot = {}
     update_count = 0
+    client.quiet = True
 
     try:
         while client.connected:
-            # Check for new data
-            current = dict(client.last_status)
-            if current != last_snapshot:
+            changed = {t: v for t, v in client.topics.items()
+                       if last_snapshot.get(t, _MISSING) != v}
+            if changed:
                 update_count += 1
-                last_snapshot = current
-
-                # Build compact live display
+                last_snapshot.update(changed)
                 ts = time.strftime("%H:%M:%S")
-                parts = []
+                parts = [f"{_short_name(t)}={proto.describe_topic_value(t, v)}"
+                         for t, v in changed.items()]
+                print(f"[{ts}] #{update_count}  " + "  |  ".join(parts))
 
-                # Priority readings (most useful while riding)
-                display_order = [
-                    ("spd", "speed"),
-                    ("speed", None),
-                    ("bat", "battery"),
-                    ("battery", None),
-                    ("pwr", "assist"),
-                    ("assist", None),
-                    ("cad", "cadence"),
-                    ("rpm", None),
-                    ("pedal_rpm", None),
-                    ("torque", "torque"),
-                    ("trq", None),
-                    ("pedal_torque", None),
-                    ("motor_temp", "motor"),
-                    ("mt", None),
-                    ("driver_temp", "driver"),
-                    ("dt", None),
-                    ("module_temp", "module"),
-                    ("boost", "boost"),
-                    ("boost_btn", "boost_btn"),
-                    ("boost_button", None),
-                    ("light", "light"),
-                    ("lux", None),
-                    ("light_sensor", None),
-                    ("humidity", "humid"),
-                    ("hum", None),
-                    ("air_quality", "air"),
-                    ("aq", None),
-                    ("locked", "lock"),
-                    ("err", "err"),
-                    ("error", None),
-                ]
-
-                seen_labels = set()
-                for key, label in display_order:
-                    if key in current and label and label not in seen_labels:
-                        val = _format_value(key, current[key])
-                        parts.append(f"{label}={val}")
-                        seen_labels.add(label)
-
-                if parts:
-                    line = f"[{ts}] #{update_count}  " + "  |  ".join(parts)
-                    print(f"\r{line}")
-
-            # Small delay before checking again
             await asyncio.sleep(0.2)
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
+    finally:
+        client.quiet = False
 
     print("\n   Monitor stopped.")
+
+
+async def show_modules(client):
+    """Show each module's status, derived by the bike from its CAN heartbeat."""
+    if not client.require_s5():
+        return
+
+    print("\nReading module status (CAN heartbeats)...")
+    await client.read_topics(proto.HEARTBEAT_TOPICS, timeout=3.0)
+    for topic, name in proto.DEVICE_STATUS_TOPICS.items():
+        if topic in client.topics:
+            shown = proto.describe_topic_value(topic, client.topics[topic])
+        else:
+            shown = "(no report)"
+        print(f"   {name:18s} {shown}")

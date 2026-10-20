@@ -1,5 +1,5 @@
 """
-VanMoof S5/A5/S6 BLE Light Commands
+VanMoof S5/A5 BLE Light Commands
 
 Provides function to set the bike's light mode via BLE.
 
@@ -8,30 +8,34 @@ Functions:
 
 Each function expects an authenticated VanMoofClient instance.
 
-Command group: 0x01 (lights)
+| Model | Topic                            | Values                        |
+|-------|----------------------------------|-------------------------------|
+| S5/A5 | 0x006B settings/light_mode/set   | 1 on, 2 off, 3 auto           |
+| S6    | 0x0131 light_mode (SET)          | [mode, 1]: 0 off, 2 on, 3 auto|
 
-| Function   | Command (hex)          | Description         |
-|------------|-----------------------|---------------------|
-| set_lights | 81 00 03 01 00 6B <n> | Set light mode      |
+Values as the official app encodes them. The S5/A5 confirm on 0x006A
+settings/light_mode; the S6 value is published back or read with GET.
 """
-import asyncio
+from utils import protocol_codes as proto
+from utils import s6_protocol as s6
+from utils.protocol_codes import Topic
+
 
 async def set_lights(client, mode: str):
     """Set the light mode (off, on, auto)"""
-    if not client.authenticated:
-        print("   ❌ Not authenticated")
+    if not client.require_auth():
         return
-    modes = {"off": 0x00, "on": 0x01, "auto": 0x03}
     mode = mode.lower()
-    if mode not in modes:
+    values = s6.LIGHT_MODE_VALUES if client.bike_model == "S6" else proto.LIGHT_MODE_VALUES
+    value = values.get(mode)
+    if value is None:
         print("   ❌ Light mode must be: off, on, or auto")
         return
-    mode_names = {"off": "Off", "on": "Always On", "auto": "Auto/Pulse"}
+    mode_names = {"off": "Off", "on": "Always On", "auto": "Auto"}
     print(f"\n💡 Setting lights to {mode_names[mode]}...")
-    cmd = bytes([0x81, 0x00, 0x03, 0x01, 0x00, 0x6B, modes[mode]])
-    await client.send(cmd, f"lights {mode}")
-    await asyncio.sleep(0.5)
-    for _ in range(3):
-        resp = await client.recv(0.5)
-        if not resp:
-            break
+    if client.bike_model == "S6":
+        await client.s6_apply_setting("Light mode", s6.Topic.LIGHT_MODE,
+                                      [value, s6.LIGHT_OFF_AUTO_MODE])
+        return
+    await client.apply_setting("Light mode", Topic.LIGHT_MODE_SET, value,
+                               Topic.LIGHT_MODE, f"lights {mode}")
