@@ -587,6 +587,35 @@ the worded descriptions riders see come from VanMoof's support material.
   VBAT read failed, `0x9053` low-battery shutdown (RSOC < 11% or VBAT <
   3401 mV), `0x9000` malformed DTC-clear command. `utils/s6_protocol.py`
   (`describe_dtc`) renders these.
+
+The DTC **subcode name strings** were decoded from the `ble` image's `.rodata`
+(the `dtc` dump's name block). The per-subcode->number mapping runs through
+nested jump tables that aren't reproduced here, but the fault vocabulary is:
+
+- CAN/SPI layer: `CAN_RAM_ECC_EVENT`, `CAN_SPI_CRC_EVENT`, `CAN_INVALID_MESSAGE`,
+  `CAN_RESTRICTED_MODE`, `CAN_TXFIFO_ATTEMPTS`, `SPI_BUSY`, `SPI_TIMEOUT`,
+  `SPI_IN_PROGRESS`, `SPI_ERROR`, `TORQUE_VOLTAGE`.
+- CPU/runtime: `HARD_FAULT`, `NMI_HANDLER`, `DEFAULT_HANDLER`, `STUCK_IN_IRQ`,
+  `WATCHDOG`, `STUCK_IN_IRQ`, `LIST_FULL`.
+- Battery/charger state machine (timeouts): `BATTERY_DISCHARGE_WAKE_UP_TIMEOUT`,
+  `BATTERY_DISCHARGE_MODE_TIMEOUT`, `BATTERY_DISCHARGE_MONITOR_TIMEOUT`,
+  `BATTERY_CHARGE_WAKE_UP_TIMEOUT`, `BATTERY_CHARGE_MODE_TIMEOUT`,
+  `BATTERY_CHARGE_MONITOR_TIMEOUT`, `BATTERY_STANDBY_MONITOR_TIMEOUT`,
+  `CHARGER_RAMP_UP_TIMEOUT`, `CHARGER_IDENTIFICATION_TIMEOUT`, `CHARGER_INVALID`,
+  `CHARGER_FW_OUTDATED`, `BATTERY_VOLTAGE_TOO_LOW`, `POWER_CONTROL_MISSING`.
+- BMS protection / AFE (these are the battery pack fault bits): `DEEPLY_DISCHARGED`,
+  `UNDER_VOLTAGE_THRESHOLD1/2`, `OVER_VOLTAGE_THRESHOLD1/2`, `CHARGE_VOLTAGE_WARNING`,
+  `DISCHARGE_OVERCURRENT_THRESHOLD1/2`, `PRE_DISCHARGE_OVERCURRENT`,
+  `CHARGE_CURRENT_WARNING`, `UNDER_CURRENT`, `DISCHARGE_OVER_TEMPERATURE`,
+  `DISCHARGE_UNDER_TEMPERATURE`, `DISCHARGE_FET_OVER_TEMPERATURE`,
+  `CELL_IMBALANCE`, `CELL_IMBALANCE_THRESHOLD1/2`, `CELL_THERMISTOR_OPEN`,
+  `FET_THERMISTOR_OPEN`, `PRE_CHARGE_TIMEOUT`, `PRE_DISCHARGE_FET_FAILURE`,
+  `PRE_DISCHARGE_OVERLOAD`, `SECONDARY_OVP_TRIGGERED`, `OCP_BY_AFE`, `OVER_POWER`,
+  `SHORT_CIRCUIT`, `FUSE_BURN`, `FW_SIG_FAILED`, `I2C_DRIVER/TIMEOUT/EEPROM/ERROR`,
+  `PREVENTION`, `INITIALIZING`.
+- Reset reasons (`ble/system/reset_reason`): `NORESET`, `WAKEUP`, `SOFTWARE`,
+  `NRSTPIN`, `PORSUPPLY`, `BORSUPPLY`, `HWFAULT`, `OTHER`; CAN states `PASSIVE`,
+  `BUS_OFF`. DTC list entries are shown `Active`/`Inactive`.
 - The old numbered scheme (motor 1-8, BMS 9-20, SIM 54-58, ...) is the
   **S3/X3** generation's and does **not** apply to these bikes, so it isn't
   reproduced here.
