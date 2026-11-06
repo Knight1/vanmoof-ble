@@ -4,7 +4,7 @@
 bleak>=3.0.2
 
 # CBOR encoding/decoding for VanMoof protocol
-cbor2>=6.1.5
+cbor2>=6.2.0.post2
 
 # Cryptography for Ed25519 signing
 cryptography>=50.0.2
